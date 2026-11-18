@@ -16,11 +16,29 @@ Aplicación de escritorio para **Windows, macOS y Linux**, con interfaz oscura, 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Licencia](https://img.shields.io/badge/licencia-MIT-7c6cff)
 
-[Descargar](#-descarga) · [Funcionalidades](#-funcionalidades) · [Instalación](#-instalación-desde-el-código) · [Seguridad](#-seguridad)
+[Descargar](#-descarga) · [Capturas](#-capturas) · [Funcionalidades](#-funcionalidades) · [Instalación](#-instalación-desde-el-código) · [Seguridad](#-seguridad)
 
 </div>
 
 ---
+
+## 📸 Capturas
+
+<p align="center">
+  <img src="docs/screenshots/disk-map.png" alt="Mapa del disco con el menú contextual" width="100%">
+  <br><sub><b>Mapa del disco</b>: anillos interactivos, lista con el color de cada sector y menú contextual.</sub>
+</p>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/disks.png" alt="Discos"><br><sub><b>Discos</b>: espacio en tiempo real y por dónde empezar.</sub></td>
+    <td width="50%"><img src="docs/screenshots/cleanup.png" alt="Limpieza"><br><sub><b>Limpieza</b>: temporales y cachés por categoría, con nivel de riesgo.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/large-files.png" alt="Archivos grandes"><br><sub><b>Archivos grandes</b>: filtros, casillas y acciones rápidas.</sub></td>
+    <td width="50%"><img src="docs/screenshots/file-types.png" alt="Tipos de archivo"><br><sub><b>Tipos de archivo</b>: qué clase de archivos ocupa tu espacio.</sub></td>
+  </tr>
+</table>
 
 ## ✨ Funcionalidades
 
@@ -167,7 +185,7 @@ desktop-free-space/
 │   ├── core.py        # Lógica: análisis, categorías por sistema, duplicados, protección de rutas y borrado
 │   └── main.py        # Interfaz gráfica (customtkinter + mapa de anillos en tk.Canvas)
 ├── assets/            # Iconos (icon.ico, icon.png)
-├── docs/              # Portada (hero.png) e imagen para redes (social-preview.jpg)
+├── docs/              # Portada (hero.png), capturas (screenshots/) e imagen para redes (social-preview.jpg)
 ├── installer/         # Script del instalador de Windows (Inno Setup)
 ├── build.bat          # Genera el .exe (Windows)
 ├── build.sh           # Genera la app (macOS) o el binario (Linux)

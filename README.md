@@ -16,13 +16,31 @@ A dark-themed desktop app for **Windows, macOS and Linux** that draws an interac
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-7c6cff)
 
-[Download](#-download) · [Features](#-features) · [Install](#-install-from-source) · [Safety](#-safety)
+[Download](#-download) · [Screenshots](#-screenshots) · [Features](#-features) · [Install](#-install-from-source) · [Safety](#-safety)
 
 </div>
 
 > The app's interface is currently in Spanish. Button names below are given in English with the Spanish label in brackets.
 
 ---
+
+## 📸 Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/disk-map.png" alt="Disk map with the context menu" width="100%">
+  <br><sub><b>Disk map</b>: interactive rings, a list coloured like each sector and the context menu.</sub>
+</p>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/disks.png" alt="Disks"><br><sub><b>Disks</b>: live free space and where to start.</sub></td>
+    <td width="50%"><img src="docs/screenshots/cleanup.png" alt="Cleanup"><br><sub><b>Cleanup</b>: temp files and caches by category, with a risk level.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/large-files.png" alt="Large files"><br><sub><b>Large files</b>: filters, checkboxes and quick actions.</sub></td>
+    <td width="50%"><img src="docs/screenshots/file-types.png" alt="File types"><br><sub><b>File types</b>: what kind of files fill your disk.</sub></td>
+  </tr>
+</table>
 
 ## ✨ Features
 
@@ -169,7 +187,7 @@ desktop-free-space/
 │   ├── core.py        # Logic: scanning, per-OS categories, duplicates, path protection and deletion
 │   └── main.py        # GUI (customtkinter + sunburst map)
 ├── assets/            # Icons (icon.ico, icon.png)
-├── docs/              # Cover (hero.png) and social preview image (social-preview.jpg)
+├── docs/              # Cover (hero.png), screenshots (screenshots/) and social preview image (social-preview.jpg)
 ├── installer/         # Windows installer script (Inno Setup)
 ├── build.bat          # Builds the .exe (Windows)
 ├── build.sh           # Builds the app (macOS) or binary (Linux)

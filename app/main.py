@@ -19,7 +19,7 @@ import core  # noqa: E402
 from core import human  # noqa: E402
 
 APP_NAME = "Desktop Free Space"
-VERSION = "2.5.2"
+VERSION = "2.6.0"
 
 # ---------------------------------------------------------------------------
 # Sistema visual
@@ -52,19 +52,26 @@ C = {
     "bad_border": "#4d1f40",
     "bad_off": "#7a2e45",     # botón rojo desactivado (texto blanco legible)
     "sel": "#1f3a85",
+    "row_hover": "#1a2651",   # fila bajo el ratón
+    "row_hover_on": "#1c3170",  # fila marcada bajo el ratón
+    "check_off": "#53618f",   # borde de la casilla sin marcar
+    "menu": "#131c3a",        # menú contextual
+    "menu_border": "#2b3a68",
+    "menu_hover": "#223164",
 }
 RADIUS = 16
-CHECK_ON, CHECK_OFF = "☑", "☐"
 UI_FONT = "Segoe UI"
 MONO_FONT = "Consolas"
 FILE_MANAGER = "Explorador" if core.IS_WIN else "Finder" if core.IS_MAC else "gestor de archivos"
 ICON_FONT = None
 ICONS_MDL2 = {"home": "\uE80F", "clean": "\uE75C", "folder": "\uE8B7", "file": "\uE7C3", "ai": "\uE99A",
               "apps": "\uE71D", "shield": "\uEA18", "trash": "\uE74D", "drive": "\uEDA2", "check": "\uE73E",
-              "info": "\uE946", "warn": "\uE7BA", "map": "\uE81E", "list": "\uE8FD", "copy": "\uE8C8"}
+              "info": "\uE946", "warn": "\uE7BA", "map": "\uE81E", "list": "\uE8FD", "copy": "\uE8C8",
+              "eye": "\uE890", "open": "\uE838", "add": "\uE710", "link": "\uE71B", "search": "\uE721",
+              "enter": "\uE76C"}
 ICONS_FALLBACK = {"home": "⌂", "clean": "✦", "folder": "▤", "file": "▦", "ai": "◈", "apps": "▣", "shield": "⛨",
                   "trash": "✕", "drive": "◉", "check": "✓", "info": "i", "warn": "!", "map": "◔", "list": "≡",
-                  "copy": "⧉"}
+                  "copy": "⧉", "eye": "◉", "open": "▤", "add": "+", "link": "⧉", "search": "⌕", "enter": "›"}
 
 
 def icon(name: str) -> str:
@@ -89,6 +96,7 @@ def card(master, **kw):
 
 
 BTN_STYLES = {
+    # Radio 8 en botones y controles: a 125 % y 150 % son píxeles enteros (sin escalón en los cantos).
     "primary": dict(fg_color=C["accent"], hover_color=C["accent_h"], text_color="#ffffff",
                     text_color_disabled="#ffffff", border_width=0),
     "secondary": dict(fg_color=C["surface2"], hover_color=C["hover"], text_color=C["text"],
@@ -102,7 +110,7 @@ BTN_STYLES = {
 
 
 def btn(master, text, command=None, kind="secondary", width=0):
-    return ctk.CTkButton(master, text=text, command=command, corner_radius=10, height=36, font=F(13, "bold"),
+    return ctk.CTkButton(master, text=text, command=command, corner_radius=8, height=36, font=F(13, "bold"),
                          width=width, **BTN_STYLES[kind])
 
 
@@ -124,24 +132,517 @@ def set_dark_titlebar(win):
 
 
 # ---------------------------------------------------------------------------
-# Tabla (Treeview oscuro, orden por columnas y casillas)
+# Imágenes pequeñas con suavizado (casillas y puntos de color de las tablas)
+# ---------------------------------------------------------------------------
+_IMG_CACHE: dict = {}
+
+
+def _aa_image(key, size, draw, fallback, height=None):
+    """Dibuja a 4x y reduce para tener bordes suaves (sin Pillow, un dibujo simple). key=None: sin caché."""
+    img = _IMG_CACHE.get(key) if key is not None else None
+    if img is None:
+        w, h = size, height or size
+        if Image is None:
+            img = fallback(w) if height is None else fallback(w, h)
+        else:
+            im = Image.new("RGBA", (w * 4, h * 4), (0, 0, 0, 0))
+            draw(ImageDraw.Draw(im), w * 4) if height is None else draw(ImageDraw.Draw(im), w * 4, h * 4)
+            img = ImageTk.PhotoImage(im.resize((w, h), Image.LANCZOS))
+        if key is not None:
+            _IMG_CACHE[key] = img
+    return img
+
+
+def _pi_box(size, fill=None, border=None):
+    img = tk.PhotoImage(width=size, height=size)
+    if fill:
+        img.put(fill, to=(0, 0, size, size))
+    if border:
+        for box in ((0, 0, size, 1), (0, size - 1, size, size), (0, 0, 1, size), (size - 1, 0, size, size)):
+            img.put(border, to=box)
+    return img
+
+
+def check_image(state: str, k: float):
+    """Casilla de verificación: 'off', 'on' o 'mixed'."""
+    size = max(14, round(18 * k))
+
+    def draw(d, s):
+        r = s * 0.27
+        white = (255, 255, 255, 255)
+        if state == "off":
+            lw = max(4, round(s * 0.09))
+            d.rounded_rectangle((lw / 2, lw / 2, s - 1 - lw / 2, s - 1 - lw / 2), r - lw / 2,
+                                fill=(255, 255, 255, 10), outline=_rgb(C["check_off"]) + (255,), width=lw)
+            return
+        d.rounded_rectangle((0, 0, s - 1, s - 1), r, fill=_rgb(C["accent"]) + (255,))
+        w = round(s * 0.12)
+        if state == "on":
+            pts = [(s * 0.27, s * 0.52), (s * 0.44, s * 0.68), (s * 0.74, s * 0.34)]
+            d.line(pts, fill=white, width=w, joint="curve")
+            for x, y in (pts[0], pts[-1]):
+                d.ellipse((x - w / 2, y - w / 2, x + w / 2, y + w / 2), fill=white)
+        else:
+            d.rounded_rectangle((s * 0.27, s * 0.5 - w / 2, s * 0.73, s * 0.5 + w / 2), w / 2, fill=white)
+
+    def fallback(n):
+        if state == "off":
+            return _pi_box(n, border=C["check_off"])
+        img = _pi_box(n, fill=C["accent"])
+        q = n // 4
+        img.put("#ffffff", to=(q, q, n - q, n - q) if state == "on" else (q, n // 2 - 1, n - q, n // 2 + 1))
+        return img
+
+    return _aa_image(("chk", state, size), size, draw, fallback)
+
+
+def share_image(color: str, shape: str, frac: float, k: float):
+    """Marcador de fila: punto del color de su sector (cuadrado = carpeta, círculo = archivo, anillo = resto)
+    y una barra fina con la parte que ocupa."""
+    w, h = round(86 * k), max(10, round(12 * k))
+
+    def draw(d, W, H):
+        rgb = _rgb(color) + (255,)
+        s_ = H
+        if shape == "dir":
+            d.rounded_rectangle((0, 0, s_ - 1, s_ - 1), s_ * 0.3, fill=rgb)
+        elif shape == "file":
+            d.ellipse((s_ * 0.06, s_ * 0.06, s_ * 0.94, s_ * 0.94), fill=rgb)
+        else:
+            lw = round(s_ * 0.16)
+            d.ellipse((lw / 2, lw / 2, s_ - 1 - lw / 2, s_ - 1 - lw / 2), outline=rgb, width=lw)
+        x0, x1 = s_ + H * 0.9, W - 1
+        bh = H * 0.42
+        y0, y1 = (H - bh) / 2, (H + bh) / 2
+        d.rounded_rectangle((x0, y0, x1, y1), bh / 2, fill=_rgb(C["track"]) + (255,))
+        if frac > 0:
+            xf = x0 + max(bh, (x1 - x0) * min(frac, 1.0))
+            d.rounded_rectangle((x0, y0, xf, y1), bh / 2, fill=rgb)
+
+    def fallback(W, H):
+        img = tk.PhotoImage(width=W, height=H)
+        img.put(color, to=(0, 0, H, H))
+        x0 = H + H
+        img.put(C["track"], to=(x0, H // 3, W, H - H // 3))
+        if frac > 0:
+            img.put(color, to=(x0, H // 3, x0 + max(2, int((W - x0) * min(frac, 1.0))), H - H // 3))
+        return img
+
+    return _aa_image(None, w, draw, fallback, height=h)
+
+
+# ---------------------------------------------------------------------------
+# Menú contextual propio (sustituye al menú nativo, que no se puede estilizar)
+# ---------------------------------------------------------------------------
+def mi(label, fn, ico="", hint="", danger=False):
+    """Entrada de menú: texto, acción, icono, atajo a la derecha y si es destructiva."""
+    return (label, fn, ico, hint, danger)
+
+
+SEP = ("-", None)
+
+
+def _win11() -> bool:
+    try:
+        return core.IS_WIN and sys.getwindowsversion().build >= 22000
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _work_area(x, y, widget):
+    """Área útil del monitor que contiene el punto (sin barra de tareas)."""
+    if core.IS_WIN:
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                            ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+            user32 = ctypes.windll.user32
+            user32.MonitorFromPoint.restype = ctypes.c_void_p
+            user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+            user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.POINTER(MONITORINFO)]
+            mon = user32.MonitorFromPoint(wintypes.POINT(int(x), int(y)), 2)
+            info = MONITORINFO()
+            info.cbSize = ctypes.sizeof(MONITORINFO)
+            if mon and user32.GetMonitorInfoW(mon, ctypes.byref(info)):
+                r = info.rcWork
+                return r.left, r.top, r.right, r.bottom
+        except Exception:  # noqa: BLE001
+            pass
+    return 0, 0, widget.winfo_screenwidth(), widget.winfo_screenheight()
+
+
+def _dwm_popup(win, border: str):
+    """Windows 11: esquinas redondeadas, borde fino y sombra del sistema en una ventana sin marco."""
+    try:
+        import ctypes
+
+        class MARGINS(ctypes.Structure):
+            _fields_ = [("l", ctypes.c_int), ("r", ctypes.c_int), ("t", ctypes.c_int), ("b", ctypes.c_int)]
+        dwm = ctypes.windll.dwmapi
+        hwnd = ctypes.windll.user32.GetParent(win.winfo_id())
+        r, g, b = _rgb(border)
+
+        def put(attr, value):
+            v = ctypes.c_int(value)
+            dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(v), ctypes.sizeof(v))
+        put(33, 2)                          # DWMWA_WINDOW_CORNER_PREFERENCE = ROUND
+        put(34, (b << 16) | (g << 8) | r)   # DWMWA_BORDER_COLOR
+        put(2, 2)                           # DWMWA_NCRENDERING_POLICY = ENABLED (sombra)
+        m = MARGINS(1, 1, 1, 1)
+        dwm.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(m))
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+class PopupMenu(tk.Toplevel):
+    """Menú flotante oscuro: cabecera con lo seleccionado, iconos, atajos, resaltado redondeado y teclado."""
+
+    current: "PopupMenu | None" = None
+
+    def __init__(self, master, items, x, y, title="", subtitle="", min_width=0):
+        if PopupMenu.current is not None:
+            PopupMenu.current.close()
+        super().__init__(master)
+        PopupMenu.current = self
+        self.withdraw()
+        self.overrideredirect(True)
+        self.k = k = _scale_of(master)
+        self._native = _win11()
+        self.configure(bg=C["menu"] if self._native else C["menu_border"])
+        try:
+            self.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        px = lambda v: round(v * k)  # noqa: E731
+        body = tk.Frame(self, bg=C["menu"], bd=0, highlightthickness=0)
+        body.pack(fill="both", expand=True, padx=0 if self._native else 1, pady=0 if self._native else 1)
+        inner = tk.Frame(body, bg=C["menu"], bd=0, highlightthickness=0)
+        inner.pack(fill="both", expand=True, padx=px(6), pady=px(6))
+        tk.Frame(inner, bg=C["menu"], height=0,  # ancho mínimo
+                 width=max(0 if min_width else px(236), min_width - 2 * px(6))).pack()
+
+        if title:
+            hd = tk.Frame(inner, bg=C["menu"])
+            hd.pack(fill="x", padx=px(12), pady=(px(6), px(8)))
+            ctk.CTkLabel(hd, text=title, font=F(13, "bold"), text_color=C["text"], anchor="w", height=20,
+                         fg_color=C["menu"]).pack(fill="x")
+            if subtitle:
+                ctk.CTkLabel(hd, text=subtitle, font=F(11), text_color=C["muted"], anchor="w", height=16,
+                             fg_color=C["menu"]).pack(fill="x", pady=(1, 0))
+            self._sep(inner)
+
+        self.rows: list[dict] = []
+        for it in items:
+            if not it or it[0] == "-":
+                if self.rows:
+                    self._sep(inner)
+                continue
+            label, fn, ico, hint, danger = (tuple(it) + ("", "", False))[:5]
+            row = ctk.CTkFrame(inner, fg_color=C["menu"], bg_color=C["menu"], corner_radius=8)
+            row.pack(fill="x", pady=1)
+            fg = C["bad"] if danger else C["text"]
+            ic = ctk.CTkLabel(row, text=icon(ico) if ico else "", font=IF(15), width=22, height=34,
+                              text_color=C["bad"] if danger else C["muted"], fg_color="transparent")
+            ic.pack(side="left", padx=(12, 10))
+            lb = ctk.CTkLabel(row, text=label, font=F(13), text_color=fg, anchor="w", height=34,
+                              fg_color="transparent")
+            hl = None
+            if hint:
+                hl = ctk.CTkLabel(row, text=hint, font=F(11), text_color=C["faint"], height=34,
+                                  fg_color="transparent")
+                hl.pack(side="right", padx=(16, 12))
+            lb.pack(side="left", fill="x", expand=True, padx=(0, 0 if hint else 18))
+            self.rows.append(dict(frame=row, icon=ic, label=lb, hint=hl, fn=fn, danger=danger))
+        self._active = None
+
+        self.bind("<Motion>", self._track)
+        self.bind("<Leave>", self._track)
+        self.bind("<ButtonPress>", self._press)
+        self.bind("<ButtonRelease-1>", self._release)
+        self.bind("<Escape>", lambda e: self.close())
+        self.bind("<Down>", lambda e: self._step(1))
+        self.bind("<Up>", lambda e: self._step(-1))
+        self.bind("<Tab>", lambda e: (self._step(1), "break")[1])
+        for key in ("<Return>", "<KP_Enter>", "<space>"):
+            self.bind(key, lambda e: self._invoke(self._active))
+        self.bind("<FocusOut>", lambda e: self.after(60, self._check_focus))
+        self._place(x, y)
+
+    # -- construcción y colocación --
+    def _sep(self, parent):
+        tk.Frame(parent, bg=C["border"], height=max(1, round(self.k))).pack(fill="x", padx=round(10 * self.k),
+                                                                          pady=round(5 * self.k))
+
+    def _place(self, x, y):
+        self.update_idletasks()
+        w, h = self.winfo_reqwidth(), self.winfo_reqheight()
+        left, top, right, bottom = _work_area(x, y, self)
+        nx = x + 2 if x + 2 + w <= right else max(left, x - w - 2)
+        ny = y + 2 if y + 2 + h <= bottom else max(top, y - h - 2)
+        self.geometry(f"+{nx}+{ny}")
+        try:
+            self.attributes("-alpha", 0.0)
+        except tk.TclError:
+            pass
+        self.deiconify()
+        self.update_idletasks()
+        if self._native:
+            _dwm_popup(self, C["menu_border"])
+        self.lift()
+        self._fade(0)
+        try:
+            self.grab_set()
+        except tk.TclError:
+            pass
+        self.focus_force()
+
+    def _fade(self, i, n=5):
+        try:
+            self.attributes("-alpha", min(1.0, (i + 1) / n))
+        except tk.TclError:
+            return
+        if i + 1 < n:
+            self.after(14, lambda: self._fade(i + 1, n))
+
+    # -- interacción --
+    def _row_at(self, x_root, y_root):
+        w = self.winfo_containing(x_root, y_root)
+        while w is not None and w is not self:
+            for i, r in enumerate(self.rows):
+                if w is r["frame"]:
+                    return i
+            w = getattr(w, "master", None)
+        return None
+
+    def _inside(self, x_root, y_root):
+        return (self.winfo_rootx() <= x_root < self.winfo_rootx() + self.winfo_width()
+                and self.winfo_rooty() <= y_root < self.winfo_rooty() + self.winfo_height())
+
+    def _track(self, e):
+        self._activate(self._row_at(e.x_root, e.y_root) if self._inside(e.x_root, e.y_root) else None)
+
+    def _activate(self, i):
+        if i == self._active:
+            return
+        for j in (self._active, i):
+            if j is None:
+                continue
+            r, on = self.rows[j], j == i
+            bg = (C["bad_soft_h"] if r["danger"] else C["menu_hover"]) if on else C["menu"]
+            r["frame"].configure(fg_color=bg)
+            r["icon"].configure(text_color=C["bad"] if r["danger"] else (C["text"] if on else C["muted"]))
+            if r["hint"] is not None:
+                r["hint"].configure(text_color=C["muted"] if on else C["faint"])
+        self._active = i
+
+    def _step(self, d):
+        if self.rows:
+            self._activate(((self._active if self._active is not None else (-1 if d > 0 else 0)) + d)
+                           % len(self.rows))
+        return "break"
+
+    def _press(self, e):
+        if not self._inside(e.x_root, e.y_root):
+            self.close()
+
+    def _release(self, e):
+        if self._inside(e.x_root, e.y_root):
+            self._invoke(self._row_at(e.x_root, e.y_root))
+
+    def _invoke(self, i):
+        if i is None:
+            return
+        fn = self.rows[i]["fn"]
+        master = self.master
+        self.close()
+        if fn:
+            master.after(15, fn)
+
+    def _check_focus(self):
+        try:
+            if self.winfo_exists() and self.focus_get() is None:
+                self.close()
+        except (tk.TclError, KeyError):
+            self.close()
+
+    def close(self):
+        if PopupMenu.current is self:
+            PopupMenu.current = None
+        try:
+            self.grab_release()
+            self.destroy()
+        except tk.TclError:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Estado vacío: insignia grande con degradado, título, explicación y acción directa
+# ---------------------------------------------------------------------------
+def _icon_font_file():
+    """Archivo de la fuente de iconos para dibujarla con Pillow (Segoe Fluent Icons / MDL2 en Windows)."""
+    if not core.IS_WIN or not ICON_FONT:
+        return None
+    fonts = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
+    for name in (("SegoeIcons.ttf", "segmdl2.ttf") if "Fluent" in ICON_FONT else ("segmdl2.ttf", "SegoeIcons.ttf")):
+        path = os.path.join(fonts, name)
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def badge_image(ico: str, k: float, size: int = 92):
+    """Círculo con degradado azul → violeta, halo suave y el icono en blanco. None si no se puede dibujar."""
+    if Image is None:
+        return None
+    font_file = _icon_font_file()
+    if not font_file:
+        return None
+    px = round(size * k)
+    key = ("badge", ico, px)
+    if key in _IMG_CACHE:
+        return _IMG_CACHE[key]
+    try:
+        from PIL import ImageFont
+        S = px * 4
+        im = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        a1, a2 = _rgb(C["accent"]), _rgb(C["accent2"])
+        d.ellipse((0, 0, S - 1, S - 1), fill=a1 + (22,))                        # halo exterior
+        m = S * 0.09
+        d.ellipse((m, m, S - 1 - m, S - 1 - m), fill=a1 + (34,))                # halo interior
+        r0 = S * 0.2
+        n = int(S - 2 * r0)
+        grad = Image.new("RGBA", (n, n))
+        gd = ImageDraw.Draw(grad)
+        for i in range(2 * n):                                                 # degradado diagonal
+            t = i / (2 * n - 1)
+            col = tuple(int(a + (b - a) * t) for a, b in zip(a1, a2)) + (255,)
+            gd.line((i, 0, 0, i), fill=col, width=2)
+        mask = Image.new("L", (n, n), 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, n - 1, n - 1), fill=255)
+        im.paste(grad, (int(r0), int(r0)), mask)
+        d = ImageDraw.Draw(im)
+        d.ellipse((r0, r0, S - 1 - r0, S - 1 - r0), outline=(255, 255, 255, 40), width=max(2, S // 90))
+        font = ImageFont.truetype(font_file, int(S * 0.27))
+        d.text((S / 2, S / 2), ICONS_MDL2.get(ico, ICONS_MDL2["info"]), font=font, fill=(255, 255, 255, 255),
+               anchor="mm")
+        img = ImageTk.PhotoImage(im.resize((px, px), Image.LANCZOS))
+    except Exception:  # noqa: BLE001
+        return None
+    _IMG_CACHE[key] = img
+    return img
+
+
+class EmptyState(ctk.CTkFrame):
+    """Mensaje para listas vacías. Se compacta solo (quita botón, texto…) si no cabe en su sitio."""
+
+    def __init__(self, master, ico="info", title="", text="", action=None, bg=None):
+        self.bgc = bg or C["surface"]
+        super().__init__(master, fg_color=self.bgc, corner_radius=0)
+        self.k = _scale_of(master)
+        self._level = None
+        self.badge_img = tk.Label(self, bg=self.bgc, bd=0, highlightthickness=0)
+        self.badge_ctk = ctk.CTkLabel(self, text="", font=IF(28), width=68, height=68, corner_radius=34,
+                                      fg_color=C["accent_soft"], text_color=C["accent"])
+        self.badge = self.badge_img
+        self.title = ctk.CTkLabel(self, text="", font=F(16, "bold"), text_color=C["text"], fg_color=self.bgc)
+        self.text = ctk.CTkLabel(self, text="", font=F(12), text_color=C["muted"], fg_color=self.bgc,
+                                 wraplength=520, justify="center")
+        self.button = btn(self, "", None, "primary")
+        self.set(ico, title, text, action)
+
+    def set(self, ico="info", title="", text="", action=None):
+        img = badge_image(ico, self.k)
+        self.badge.pack_forget()
+        if img is not None:
+            self.badge_img.configure(image=img)
+            self.badge = self.badge_img
+        else:  # sin Pillow o sin fuente de iconos: círculo dibujado por CustomTkinter
+            self.badge_ctk.configure(text=icon(ico))
+            self.badge = self.badge_ctk
+        self.title.configure(text=title)
+        self.text.configure(text=text)
+        self._has_text, self._action = bool(text), action
+        if action:
+            self.button.configure(text=f"  {action[0]}  ", command=action[1])
+        self._level = None
+        self.fit(10 ** 6)
+
+    def fit(self, avail):
+        """Muestra todo lo que quepa en `avail` píxeles de alto: insignia, título, texto y botón."""
+        k = self.k
+        need = {"badge": 98 * k, "title": 30 * k, "text": 44 * k if self._has_text else 0,
+                "button": 56 * k if self._action else 0}
+        level = 0
+        for parts in (("badge", "title", "text", "button"), ("badge", "title", "text"), ("title", "text"),
+                      ("title",)):
+            if sum(need[p] for p in parts) <= avail or parts == ("title",):
+                break
+            level += 1
+        if level == self._level:
+            return
+        self._level = level
+        show = [("badge", "title", "text", "button"), ("badge", "title", "text"), ("title", "text"),
+                ("title",)][level]
+        for w in (self.badge_img, self.badge_ctk, self.title, self.text, self.button):
+            w.pack_forget()
+        if "badge" in show:
+            self.badge.pack(pady=(0, 10))
+        self.title.pack()
+        if "text" in show and self._has_text:
+            self.text.pack(pady=(4, 0))
+        if "button" in show and self._action:
+            self.button.pack(pady=(16, 0))
+
+
+class Select(ctk.CTkOptionMenu):
+    """Desplegable que abre el mismo menú flotante que el resto de la app (en vez del menú nativo)."""
+
+    def _open_dropdown_menu(self):
+        cur = self.get()
+        items = [mi(v, lambda v=v: self._dropdown_callback(v), "check" if v == cur else "") for v in self._values]
+        PopupMenu(self, items, self.winfo_rootx() - 2, self.winfo_rooty() + self.winfo_height() + 2,
+                  min_width=self.winfo_width())
+
+
+# ---------------------------------------------------------------------------
+# Tabla (Treeview oscuro, orden por columnas, casillas reales y fila resaltada al pasar el ratón)
 # ---------------------------------------------------------------------------
 class Table(ctk.CTkFrame):
-    def __init__(self, master, columns, checkable=False, tree=False, height=14, on_open=None, on_select=None,
-                 empty_text=""):
+    def __init__(self, master, columns, checkable=False, height=14, on_open=None, on_select=None,
+                 empty=None, icons=False):
         super().__init__(master, fg_color=C["surface"], corner_radius=RADIUS, border_width=1,
                          border_color=C["border"])
+        self.k = _scale_of(self)
         self.checkable = checkable
+        self.icons = icons and not checkable
         self.checked: set[str] = set()
         self.data: dict[str, object] = {}
         self.sort_keys: dict[str, dict[str, object]] = {}
-        ids = [c[0] for c in columns]
+        self.base_tags: dict[str, tuple] = {}
+        self._hover: str | None = None
+        self._cursor = ""
+        self._head_job = None
+        self._menu_items: list = []
+        self._images: dict[str, object] = {}
+        self.ids = [c[0] for c in columns]
         self.titles = {c[0]: c[1] for c in columns}
-        self.tv = ttk.Treeview(self, columns=ids, show="tree headings" if tree else "headings",
-                               height=height, selectmode="extended", style="Dark.Treeview")
-        if tree:
-            self.tv.column("#0", width=340, stretch=True)
-            self.tv.heading("#0", text="CARPETA", anchor="w")
+        lead = checkable or self.icons
+        self.tv = ttk.Treeview(self, columns=self.ids, show="tree headings" if lead else "headings",
+                               height=max(4, round(height * 0.62)), selectmode="extended",
+                               style="Dark.Treeview")  # pide poco alto: se expande con la ventana
+        if lead:
+            w = round((48 if checkable else 112) * self.k)
+            self.tv.column("#0", width=w, minwidth=w, stretch=False, anchor="center")
+            if checkable:
+                self.tv.heading("#0", text="", image=check_image("off", self.k), anchor="center",
+                                command=self._toggle_all)
+            else:
+                self.tv.heading("#0", text="", anchor="center")
         for cid, title, width, anchor in columns:
             self.tv.heading(cid, text=title, anchor=anchor, command=lambda c=cid: self.sort_by(c))
             self.tv.column(cid, width=width, anchor=anchor, stretch=cid in ("name", "path"))
@@ -152,50 +653,103 @@ class Table(ctk.CTkFrame):
         sb.grid(row=0, column=1, sticky="ns", padx=(2, 6), pady=12)
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
-        self.tv.tag_configure("odd", background=C["odd"])
+        for tag, bg in (("odd", C["odd"]), ("checked", C["accent_soft"]), ("hover", C["row_hover"]),
+                        ("hover_on", C["row_hover_on"])):
+            self.tv.tag_configure(tag, background=bg)
         self.tv.tag_configure("warn", foreground=C["warn"])
         self.tv.tag_configure("muted", foreground=C["faint"])
-        self.tv.tag_configure("checked", background=C["accent_soft"])
-        self.empty = ctk.CTkLabel(self, text=empty_text, text_color=C["faint"], font=F(13), fg_color=C["surface"])
+        self.empty = EmptyState(self, *empty) if empty else None
+        if self.empty is not None:
+            self.bind("<Configure>", lambda e: self.empty.fit(e.height - 70 * self.k), add="+")
         self._update_empty()
         if checkable:
             self.tv.bind("<Button-1>", self._on_click, add="+")
             self.tv.bind("<space>", self._on_space, add="+")
+        self.tv.bind("<Motion>", self._on_motion, add="+")
+        self.tv.bind("<Leave>", lambda e: self._set_hover(None), add="+")
         if on_open:
-            self.tv.bind("<Double-1>", lambda e: on_open(self.focused()), add="+")
+            self.tv.bind("<Double-1>", lambda e: self._on_double(e, on_open), add="+")
         if on_select:
             self.tv.bind("<<TreeviewSelect>>", lambda e: on_select(self.focused()), add="+")
         self._sort_state: dict[str, bool] = {}
 
+    # -- filas --
     def _update_empty(self):
-        if not self.empty.cget("text"):
+        if self.empty is None:
             return
         if self.tv.get_children():
             self.empty.place_forget()
         else:
-            self.empty.place(relx=0.5, rely=0.55, anchor="center")
+            self.empty.place(relx=0.5, rely=0.53, anchor="center")
+
+    def set_empty(self, ico, title, text="", action=None):
+        """Cambia el mensaje de lista vacía (p. ej. «sin resultados» tras filtrar)."""
+        if self.empty is None:
+            self.empty = EmptyState(self, ico, title, text, action)
+            self.bind("<Configure>", lambda e: self.empty.fit(e.height - 70 * self.k), add="+")
+        else:
+            self.empty.set(ico, title, text, action)
+        self.empty.fit(self.winfo_height() - 70 * self.k if self.winfo_height() > 1 else 10 ** 6)
+        self._update_empty()
 
     def clear(self):
         self.tv.delete(*self.tv.get_children())
         self.checked.clear()
         self.data.clear()
         self.sort_keys.clear()
+        self.base_tags.clear()
+        self._images.clear()
+        self._hover = None
         self._update_empty()
+        self._sync_head()
 
-    def add(self, key, values, obj=None, sort=None, tags=(), parent="", text="", checked=False):
-        vals = list(values)
+    def add(self, key, values, obj=None, sort=None, tags=(), checked=False, image=None):
+        idx = len(self.data)
+        self.base_tags[key] = tuple(tags)
+        if checked and self.checkable:
+            self.checked.add(key)
+        kw = {}
         if self.checkable:
-            vals[0] = (CHECK_ON if checked else CHECK_OFF) + "   " + str(vals[0])
-            if checked:
-                self.checked.add(key)
-        n = len(self.tv.get_children(parent))
-        t = tuple(tags) + (("odd",) if n % 2 else ()) + (("checked",) if checked else ())
-        self.tv.insert(parent, "end", iid=key, values=vals, text=text, tags=t)
+            kw["image"] = check_image("on" if checked else "off", self.k)
+        elif self.icons and image is not None:
+            kw["image"] = self._images[key] = image
+        self.tv.insert("", "end", iid=key, values=list(values), tags=self._tags(key, idx), **kw)
         self.data[key] = obj
         self.sort_keys[key] = sort or {}
-        if not parent:
+        if idx == 0:
             self._update_empty()
+        if checked:
+            self._schedule_head()
         return key
+
+    def remove(self, keys):
+        for k in keys:
+            if self.tv.exists(k):
+                self.tv.delete(k)
+            self.checked.discard(k)
+            for d in (self.data, self.sort_keys, self.base_tags, self._images):
+                d.pop(k, None)
+        if self._hover not in self.data:
+            self._hover = None
+        self.restripe()
+        self._update_empty()
+        self._sync_head()
+
+    def restripe(self):
+        for i, k in enumerate(self.tv.get_children()):
+            self.tv.item(k, tags=self._tags(k, i))
+
+    def _tags(self, key, idx):
+        on = key in self.checked
+        if key == self._hover:
+            bg = "hover_on" if on else "hover"
+        else:
+            bg = "checked" if on else ("odd" if idx % 2 else "even")
+        return self.base_tags.get(key, ()) + (bg,)
+
+    def _paint(self, key, idx=None):
+        if self.tv.exists(key):
+            self.tv.item(key, tags=self._tags(key, self.tv.index(key) if idx is None else idx))
 
     def focused(self):
         f = self.tv.focus()
@@ -207,36 +761,76 @@ class Table(ctk.CTkFrame):
     def checked_objs(self):
         return [self.data[k] for k in list(self.checked) if k in self.data]
 
-    def set_checked(self, key, on):
-        vals = list(self.tv.item(key, "values"))
-        if not vals:
+    # -- casillas --
+    def set_checked(self, key, on, idx=None):
+        if not self.checkable or not self.tv.exists(key):
             return
-        vals[0] = (CHECK_ON if on else CHECK_OFF) + "   " + str(vals[0])[4:]
-        tags = [t for t in self.tv.item(key, "tags") if t != "checked"] + (["checked"] if on else [])
-        self.tv.item(key, values=vals, tags=tags)
         (self.checked.add if on else self.checked.discard)(key)
+        self.tv.item(key, image=check_image("on" if on else "off", self.k))
+        self._paint(key, idx)
+        self._schedule_head()
 
     def toggle(self, key):
         self.set_checked(key, key not in self.checked)
         self.event_generate("<<CheckChanged>>")
 
     def check_all(self, on=True):
-        for k in self.tv.get_children():
-            self.set_checked(k, on)
+        for i, k in enumerate(self.tv.get_children()):
+            self.set_checked(k, on, i)
         self.event_generate("<<CheckChanged>>")
 
+    def _toggle_all(self):
+        n = len(self.tv.get_children())
+        self.check_all(not (n and len(self.checked) >= n))
+
+    def _schedule_head(self):
+        if self.checkable and self._head_job is None:
+            self._head_job = self.after_idle(self._sync_head)
+
+    def _sync_head(self):
+        self._head_job = None
+        if not self.checkable:
+            return
+        n, c = len(self.data), len(self.checked)
+        state = "off" if not c else "on" if c >= n else "mixed"
+        self.tv.heading("#0", image=check_image(state, self.k))
+
     def _on_click(self, e):
-        if self.tv.identify_region(e.x, e.y) != "cell" or self.tv.identify_column(e.x) != "#1":
+        if self.tv.identify_region(e.x, e.y) not in ("tree", "cell") or self.tv.identify_column(e.x) != "#0":
             return
         row = self.tv.identify_row(e.y)
         if row:
             self.toggle(row)
             return "break"
 
+    def _on_double(self, e, on_open):
+        if self.tv.identify_region(e.x, e.y) not in ("cell", "tree"):
+            return
+        if self.checkable and self.tv.identify_column(e.x) == "#0":
+            return self._on_click(e)  # doble clic rápido en la casilla: solo marca/desmarca
+        on_open(self.focused())
+
     def _on_space(self, _e):
         for k in self.tv.selection():
             self.toggle(k)
         return "break"
+
+    # -- ratón --
+    def _on_motion(self, e):
+        row = self.tv.identify_row(e.y) or None
+        self._set_hover(row)
+        cur = "hand2" if (self.checkable and row and self.tv.identify_column(e.x) == "#0") else ""
+        if cur != self._cursor:
+            self._cursor = cur
+            self.tv.configure(cursor=cur)
+
+    def _set_hover(self, row):
+        if row == self._hover:
+            return
+        old, self._hover = self._hover, row
+        for k in (old, row):
+            if k:
+                self._paint(k)
 
     def sort_by(self, col):
         prev = self._sort_state.get(col)
@@ -248,12 +842,11 @@ class Table(ctk.CTkFrame):
             sk = self.sort_keys.get(k, {})
             if col in sk:
                 return sk[col]
-            return str(self.tv.set(k, col)).lstrip(CHECK_ON + CHECK_OFF + " ").lower()
+            return str(self.tv.set(k, col)).lower()
         items.sort(key=key, reverse=rev)
         for i, k in enumerate(items):
             self.tv.move(k, "", i)
-            tags = [t for t in self.tv.item(k, "tags") if t != "odd"] + (["odd"] if i % 2 else [])
-            self.tv.item(k, tags=tags)
+            self.tv.item(k, tags=self._tags(k, i))
         for cid, title in self.titles.items():
             self.tv.heading(cid, text=title + (("  ▼" if rev else "  ▲") if cid == col else ""))
 
@@ -293,14 +886,10 @@ class Table(ctk.CTkFrame):
         self.tv.bind("<B1-Motion>", move, add="+")
         self.tv.bind("<ButtonRelease-1>", up, add="+")
 
+    # -- menú contextual --
     def context_menu(self, items):
-        menu = tk.Menu(self.tv, tearoff=0, bg=C["surface2"], fg=C["text"], activebackground=C["accent"],
-                       activeforeground="#ffffff", bd=0, relief="flat", font=(UI_FONT, 10))
-        for label, fn in items:
-            if label == "-":
-                menu.add_separator()
-            else:
-                menu.add_command(label="  " + label + "    ", command=fn)
+        """items: lista de mi(...) y SEP. La cabecera del menú muestra la fila (o el número de filas) elegida."""
+        self._menu_items = items
 
         def popup(e):
             row = self.tv.identify_row(e.y)
@@ -308,11 +897,40 @@ class Table(ctk.CTkFrame):
                 if row not in self.tv.selection():
                     self.tv.selection_set(row)
                 self.tv.focus(row)
-                menu.tk_popup(e.x_root, e.y_root)
+                self._open_menu(e.x_root, e.y_root)
         self.tv.bind("<Button-3>", popup, add="+")
         if core.IS_MAC:
             self.tv.bind("<Button-2>", popup, add="+")
             self.tv.bind("<Control-Button-1>", popup, add="+")
+        for seq in ("<Shift-F10>", "<App>", "<Menu>"):
+            try:
+                self.tv.bind(seq, lambda e: self._menu_from_keyboard(), add="+")
+            except tk.TclError:
+                pass
+
+    def _menu_from_keyboard(self):
+        f = self.tv.focus()
+        if f and self._menu_items:
+            bb = self.tv.bbox(f)
+            if bb:
+                self._open_menu(self.tv.winfo_rootx() + bb[0] + 60, self.tv.winfo_rooty() + bb[1] + bb[3])
+        return "break"
+
+    def _open_menu(self, x, y):
+        sel = [k for k in self.tv.selection() if k in self.data]
+        sizes = [self.sort_keys.get(k, {}).get("size") for k in sel]
+        total = sum(s for s in sizes if isinstance(s, (int, float)))
+        if len(sel) > 1:
+            title = f"{len(sel)} elementos seleccionados"
+            sub = human(total) if total else ""
+        else:
+            key = sel[0] if sel else self.tv.focus()
+            title = str(self.tv.set(key, self.ids[0])).strip() if key else ""
+            sub = str(self.tv.set(key, "size")) if key and "size" in self.ids else ""
+            sub = "" if sub.strip() in ("—", "-") else sub
+        if len(title) > 42:
+            title = title[:40] + "…"
+        PopupMenu(self, self._menu_items, x, y, title=title, subtitle=sub)
 
 
 # ---------------------------------------------------------------------------
@@ -390,7 +1008,7 @@ class ConfirmDelete(Dialog):
         total = sum(s for _, s in items)
         self.header("danger", f"Vas a borrar {len(items)} elementos · {human(total)}", note)
         box = ctk.CTkTextbox(self.body, font=ctk.CTkFont(family=MONO_FONT, size=12), fg_color=C["bg"],
-                             text_color=C["muted"], border_width=1, border_color=C["border"], corner_radius=10)
+                             text_color=C["muted"], border_width=1, border_color=C["border"], corner_radius=8)
         for p, s in items[:2000]:
             box.insert("end", f"{human(s):>10}   {p}\n")
         if len(items) > 2000:
@@ -402,7 +1020,7 @@ class ConfirmDelete(Dialog):
         opts.pack(side="bottom", fill="x", padx=24)
         for val, t1, t2 in (("recycle", "Enviar a la Papelera", "Recuperable. El espacio se libera al vaciarla."),
                             ("perm", "Eliminar definitivamente", "Libera el espacio al momento. No se puede deshacer.")):
-            row = ctk.CTkFrame(opts, fg_color=C["surface2"], corner_radius=10)
+            row = ctk.CTkFrame(opts, fg_color=C["surface2"], corner_radius=8)
             row.pack(fill="x", pady=3)
             ctk.CTkRadioButton(row, text=t1, variable=self.mode, value=val, font=F(13, "bold"), width=230,
                                fg_color=C["accent"], hover_color=C["accent_h"], border_color=C["faint"],
@@ -525,8 +1143,6 @@ class Ring(tk.Canvas):
 PAGES = [("summary", "Discos", "home"), ("analyzer", "Mapa del disco", "map"), ("kinds", "Tipos de archivo", "list"),
          ("clean", "Limpieza", "clean"), ("big", "Archivos grandes", "file"), ("dups", "Duplicados", "copy"),
          ("models", "Modelos IA", "ai"), ("apps", "Aplicaciones", "apps")]
-EMPTY_SCAN = "Analiza un disco o una carpeta en «Mapa del disco» para ver aquí sus datos"
-
 # ---------------------------------------------------------------------------
 # Mapa de anillos interactivo (sunburst)
 # ---------------------------------------------------------------------------
@@ -950,13 +1566,22 @@ class App(ctk.CTk):
         st.theme_use("clam")
         k = self._get_window_scaling() if hasattr(self, "_get_window_scaling") else 1.0
         st.layout("Dark.Treeview", [("Dark.Treeview.treearea", {"sticky": "nswe"})])
+        # Columna inicial (casilla o punto de color) sin el triángulo de árbol, con la imagen centrada.
+        st.layout("Dark.Treeview.Item", [("Treeitem.padding", {"sticky": "nswe", "children": [
+            ("Treeitem.image", {"sticky": ""})]})])
         st.configure("Dark.Treeview", background=C["surface"], fieldbackground=C["surface"], foreground=C["text"],
-                     rowheight=int(34 * k), borderwidth=0, relief="flat", font=(UI_FONT, 10), indent=int(18 * k))
-        st.configure("Dark.Treeview.Heading", background=C["surface"], foreground=C["faint"], relief="flat",
-                     borderwidth=0, font=(UI_FONT, 9, "bold"), padding=(8, int(8 * k)))
+                     rowheight=int(40 * k), borderwidth=0, relief="flat", font=(UI_FONT, 11), indent=0)
+        st.configure("Dark.Treeview.Item", padding=0)
+        st.layout("Dark.Treeview.Heading", [("Treeheading.cell", {"sticky": "nswe"}),
+                                            ("Treeheading.border", {"sticky": "nswe", "children": [
+                                                ("Treeheading.padding", {"sticky": "nswe", "children": [
+                                                    ("Treeheading.image", {"sticky": ""}),
+                                                    ("Treeheading.text", {"sticky": "we"})]})]})])
+        st.configure("Dark.Treeview.Cell", padding=(int(6 * k), 0))
+        st.configure("Dark.Treeview.Heading", background=C["surface"], foreground=C["muted"], relief="flat",
+                     borderwidth=0, font=(UI_FONT, 9, "bold"), padding=(int(9 * k), int(9 * k)))
         st.map("Dark.Treeview", background=[("selected", C["sel"])], foreground=[("selected", "#ffffff")])
         st.map("Dark.Treeview.Heading", background=[("active", C["surface2"])], foreground=[("active", C["text"])])
-        st.configure("Treeitem.indicator", foreground=C["muted"])
 
     # ---------- estructura ----------
     def _build(self):
@@ -976,7 +1601,7 @@ class App(ctk.CTk):
         ctk.CTkLabel(lt, text=f"Gestor de espacio · v{VERSION}", font=F(11), text_color=C["faint"]).pack(anchor="w")
         ctk.CTkLabel(side, text="MENÚ", font=F(10, "bold"), text_color=C["faint"]).pack(anchor="w", padx=26, pady=(0, 6))
         for key, label, ico in PAGES:
-            b = ctk.CTkButton(side, text=f"          {label}", anchor="w", height=42, corner_radius=10,
+            b = ctk.CTkButton(side, text=f"          {label}", anchor="w", height=42, corner_radius=8,
                               font=F(13, "bold"), fg_color="transparent", hover_color=C["hover"],
                               text_color=C["muted"], command=lambda k=key: self.show(k))
             b.pack(fill="x", padx=12, pady=2)
@@ -984,6 +1609,12 @@ class App(ctk.CTk):
                               width=22, height=22)
             ic.place(x=16, rely=0.5, anchor="w")
             ic.bind("<Button-1>", lambda e, k=key: self.show(k))
+            # el icono sigue el color de fondo del botón (al pasar el ratón y al seleccionarlo): sin cuadrados
+            for w in (b, ic):
+                w.bind("<Enter>", lambda e, k=key: self._nav_paint(k, True), add="+")
+                w.bind("<Leave>", lambda e, k=key: self._nav_paint(k, False), add="+")
+            ic.bind("<Enter>", lambda e, b=b: b._on_enter(), add="+")  # el botón no pierde su resaltado
+            ic.bind("<Leave>", lambda e, b=b: b._on_leave(), add="+")
             self.nav[key] = (b, ic)
         # tarjeta de permisos / sistema
         adm = ctk.CTkFrame(side, fg_color=C["surface"], corner_radius=12, border_width=1, border_color=C["border"])
@@ -1000,13 +1631,26 @@ class App(ctk.CTk):
                    "Para limpiar Windows Temp y Windows Update hacen falta permisos.")
         else:
             tip = "Limpia lo de tu usuario. Lo del sistema necesita sudo." if not is_admin else "Ejecutando como root."
-        ctk.CTkLabel(adm, text=tip, font=F(11), text_color=C["muted"], wraplength=186, justify="left"
-                     ).pack(anchor="w", padx=14, pady=(4, 12))
+        tip_l = ctk.CTkLabel(adm, text=tip, font=F(11), text_color=C["muted"], wraplength=186, justify="left")
+        tip_l.pack(anchor="w", padx=14, pady=(4, 12))
+        restart = None
         if core.IS_WIN and not is_admin:
-            btn(adm, "Reiniciar como admin", self._relaunch_admin, "secondary").pack(fill="x", padx=12, pady=(0, 6))
+            restart = btn(adm, "Reiniciar como admin", self._relaunch_admin, "secondary")
+            restart.pack(fill="x", padx=12, pady=(0, 6))
         upd = ctk.CTkButton(adm, text="Buscar actualizaciones", command=lambda: self._check_updates(manual=True),
                             height=28, corner_radius=8, font=F(12, "bold"), **BTN_STYLES["ghost"])
         upd.pack(fill="x", padx=8, pady=(0, 10))
+        # en ventanas bajas se ocultan primero el texto y luego «Buscar actualizaciones»
+        # Contenido de la tarjeta en orden, y qué se oculta en cada nivel de compactación
+        self._adm = adm
+        self._adm_items = [(tip_l, dict(anchor="w", padx=14, pady=(4, 12)))]
+        if restart is not None:
+            self._adm_items.append((restart, dict(fill="x", padx=12, pady=(0, 6))))
+        self._adm_items.append((upd, dict(fill="x", padx=8, pady=(0, 10))))
+        self._side_hide = [tip_l, upd] + ([restart] if restart is not None else []) + [adm]
+        self._side_level = 0
+        self._side_job = None
+        side.bind("<Configure>", lambda e: self._schedule_fit_side(), add="+")
 
         # Colector
         col = ctk.CTkFrame(side, fg_color=C["surface"], corner_radius=14, border_width=2, border_color=C["accent_soft"])
@@ -1016,7 +1660,7 @@ class App(ctk.CTk):
         ch.pack(fill="x", padx=14, pady=(12, 0))
         ctk.CTkLabel(ch, text="Colector", font=F(13, "bold"), text_color=C["text"]).pack(side="left")
         self.col_count = ctk.CTkLabel(ch, text="0", font=F(11, "bold"), text_color="#ffffff", width=26, height=20,
-                                      corner_radius=10, fg_color=C["surface2"])
+                                      corner_radius=8, fg_color=C["surface2"])
         self.col_count.pack(side="right")
         self.col_label = ctk.CTkLabel(col, text="", font=F(11), text_color=C["muted"], wraplength=186,
                                       justify="left", anchor="w")
@@ -1063,12 +1707,62 @@ class App(ctk.CTk):
         self.progress.grid_remove()
         self._update_collector()
 
+    def _schedule_fit_side(self):
+        if self._side_job is None:
+            self._side_job = self.after(30, self._fit_side)
+
+    @staticmethod
+    def _pady(w) -> int:
+        import re
+        vals = [int(float(v)) for v in re.findall(r"\d+(?:\.\d+)?", str(w.pack_info().get("pady", 0)))] or [0]
+        return sum(vals) if len(vals) > 1 else 2 * vals[0]
+
+    def _set_side_level(self, level):
+        self._side_level = level
+        hidden = set(self._side_hide[:level])
+        for w, _o in self._adm_items:
+            w.pack_forget()
+        for w, o in self._adm_items:
+            if w not in hidden:
+                w.pack(**o)
+        if self._adm in hidden:
+            self._adm.pack_forget()
+        elif not self._adm.winfo_manager():
+            self._adm.pack(side="bottom", fill="x", padx=14, pady=(8, 18), before=self.col_frame)
+
+    def _fit_side(self):
+        """Mantiene el Colector entero en ventanas bajas compactando la tarjeta de sistema."""
+        self._side_job = None
+        side = self.col_frame.master
+        need = sum(w.winfo_reqheight() + self._pady(w) for w in side.pack_slaves())
+        avail = side.winfo_height()
+        level = self._side_level
+        if need > avail and level < len(self._side_hide):
+            self._set_side_level(level + 1)
+            self._schedule_fit_side()
+        elif level:
+            back = self._side_hide[level - 1]
+            opts = next((o for w, o in self._adm_items if w is back), {"pady": (8, 18)})
+            pad = opts.get("pady", 0)
+            pad = sum(pad) if isinstance(pad, tuple) else 2 * pad
+            if need + back.winfo_reqheight() + round(pad * _scale_of(side)) <= avail:
+                self._set_side_level(level - 1)
+                self._schedule_fit_side()
+
+    def _nav_paint(self, key, hover):
+        b, ic = self.nav[key]
+        on = key == getattr(self, "_page", None)
+        bg = C["hover"] if hover else (C["accent_soft"] if on else C["side"])
+        ic.configure(fg_color=bg, bg_color=bg)
+
     def show(self, key):
+        self._page = key
         self.pages[key].tkraise()
         for k, (b, ic) in self.nav.items():
             on = k == key
             b.configure(fg_color=C["accent_soft"] if on else "transparent", text_color=C["text"] if on else C["muted"])
-            ic.configure(text_color=C["accent"] if on else C["muted"], fg_color=C["accent_soft"] if on else C["side"])
+            ic.configure(text_color=C["accent"] if on else C["muted"])
+            self._nav_paint(k, False)
 
     def page_header(self, page, title, subtitle):
         h = ctk.CTkFrame(page, fg_color="transparent")
@@ -1076,10 +1770,22 @@ class App(ctk.CTk):
         tf = ctk.CTkFrame(h, fg_color="transparent")
         tf.pack(side="left")
         ctk.CTkLabel(tf, text=title, font=F(26, "bold"), text_color=C["text"]).pack(anchor="w")
-        ctk.CTkLabel(tf, text=subtitle, font=F(13), text_color=C["muted"]).pack(anchor="w", pady=(2, 0))
+        sub = ctk.CTkLabel(tf, text=subtitle, font=F(13), text_color=C["muted"], justify="left")
+        sub.pack(anchor="w", pady=(2, 0))
         actions = ctk.CTkFrame(h, fg_color="transparent", width=1, height=1)
         actions.pack(side="right", anchor="s")
+        self._wrap_to_fit(h, sub, [actions], 24)
         return actions
+
+    def _wrap_to_fit(self, row, label, others, gap):
+        """Ajusta el ancho de línea de `label` al hueco que dejan los demás elementos de la fila (ventanas
+        estrechas): el texto pasa a dos líneas en vez de pisar o aplastar los botones."""
+        def fit(_e=None):
+            k = _scale_of(row)
+            used = sum(w.winfo_reqwidth() for w in (others() if callable(others) else others))
+            avail = max(140 * k, row.winfo_width() - used - gap * k)
+            label.configure(wraplength=int(avail / k))
+        row.bind("<Configure>", fit, add="+")
 
     def hint(self, page, text):
         ctk.CTkLabel(page, text=text, font=F(12), text_color=C["faint"], anchor="w", justify="left",
@@ -1089,8 +1795,9 @@ class App(ctk.CTk):
         row = ctk.CTkFrame(page, fg_color="transparent")
         row.pack(fill="x", pady=pady)
         ctk.CTkLabel(row, text=title, font=F(15, "bold"), text_color=C["text"]).pack(side="left")
-        info = ctk.CTkLabel(row, text=sub, font=F(12), text_color=C["muted"])
+        info = ctk.CTkLabel(row, text=sub, font=F(12), text_color=C["muted"], justify="left")
         info.pack(side="left", padx=12)
+        self._wrap_to_fit(row, info, lambda: [w for w in row.winfo_children() if w is not info], 40)
         return row, info
 
     # ---------- diálogos ----------
@@ -1212,8 +1919,9 @@ class App(ctk.CTk):
         ctk.CTkLabel(hd, text="●", font=F(11), text_color=dot or C["accent"], width=12).pack(side="left")
         ctk.CTkLabel(hd, text=title.upper(), font=F(11, "bold"), text_color=C["faint"]).pack(side="left", padx=6)
         ctk.CTkLabel(t, text=value, font=F(28, "bold"), text_color=C["text"]).pack(anchor="w", padx=22)
-        ctk.CTkLabel(t, text=sub, font=F(12), text_color=C["muted"], wraplength=300, justify="left"
-                     ).pack(anchor="w", padx=22, pady=(2, 14 if action else 22))
+        sl = ctk.CTkLabel(t, text=sub, font=F(12), text_color=C["muted"], wraplength=300, justify="left")
+        sl.pack(anchor="w", padx=22, pady=(2, 14 if action else 22))
+        t.bind("<Configure>", lambda e: sl.configure(wraplength=max(120, int(e.width / _scale_of(t)) - 48)), add="+")
         if action:
             btn(t, action[0], action[1], kind, width=130).pack(anchor="w", padx=22, pady=(0, 20))
 
@@ -1245,6 +1953,25 @@ class App(ctk.CTk):
                          text_color=C["faint"]).grid(row=0, column=1, sticky="sw", pady=(36, 0))
             big = ctk.CTkLabel(hero, text=f"{human(sysdrive.free)} libres", font=F(40, "bold"), text_color=C["text"])
             big.grid(row=1, column=1, sticky="w")
+
+            def fit_big(_e=None, big=big, hero=hero):
+                """La cifra grande nunca se corta: baja el tamaño de letra si la ventana es estrecha."""
+                try:
+                    k = _scale_of(hero)
+                    avail = hero.grid_bbox(1, 1)[2] - 4 * k
+                    if avail <= 0:
+                        return
+                    for size in (40, 36, 32, 28, 24):
+                        f = tkfont.Font(family=UI_FONT, size=-round(size * k), weight="bold")
+                        if f.measure(big.cget("text")) <= avail:
+                            break
+                    if getattr(big, "_size", 40) != size:
+                        big._size = size
+                        big.configure(font=F(size, "bold"))
+                except tk.TclError:
+                    pass
+            big._fit = fit_big
+            hero.bind("<Configure>", lambda e: hero.after_idle(fit_big), add="+")
             bar = self._bar(hero, sysdrive.pct, 10)
             bar.grid(row=2, column=1, sticky="ew", pady=(10, 8))
             info = ctk.CTkLabel(hero, text="", font=F(12), text_color=C["muted"])
@@ -1363,6 +2090,8 @@ class App(ctk.CTk):
                     bar.configure(progress_color=level_color(pct) if pct >= 0.75 else C["accent"])
                     if big is not None:
                         big.configure(text=f"{human(u.free)} libres")
+                        if hasattr(big, "_fit"):
+                            big._fit()
                         info.configure(text=f"Usado {human(u.used)}  ·  Capacidad {human(u.total)}")
                     else:
                         info.configure(text=f"{human(u.free)} libres de {human(u.total)}")
@@ -1393,7 +2122,7 @@ class App(ctk.CTk):
         bar.pack(fill="x", pady=(0, 12))
         self.cat_filter = ctk.CTkSegmentedButton(
             bar, values=["Todas", "Sistema", "Navegadores", "Desarrollo", "IA / Modelos"],
-            command=lambda _v: self._fill_categories(), font=F(12, "bold"), height=34, corner_radius=10,
+            command=lambda _v: self._fill_categories(), font=F(12, "bold"), height=34, corner_radius=8,
             fg_color=C["surface"], selected_color=C["accent"], selected_hover_color=C["accent_h"],
             unselected_color=C["surface"], unselected_hover_color=C["hover"], text_color=C["text"])
         self.cat_filter.set("Todas")
@@ -1408,7 +2137,8 @@ class App(ctk.CTk):
                                checkable=True, height=13, on_select=self._show_cat)
         self.cat_table.pack(fill="both", expand=True)
         self.cat_table.bind("<<CheckChanged>>", lambda e: self._update_cat_total())
-        self.cat_table.context_menu([("Abrir carpeta", self._open_cat), ("Ver qué se borraría", self._preview_cat)])
+        self.cat_table.context_menu([mi("Ver qué se borraría", self._preview_cat, "search"),
+                                     mi("Abrir carpeta", self._open_cat, "open")])
         det = card(page)
         det.pack(fill="x", pady=(12, 0))
         self.cat_title = ctk.CTkLabel(det, text="Pulsa «Calcular espacio» para empezar", font=F(14, "bold"),
@@ -1479,6 +2209,7 @@ class App(ctk.CTk):
 
         def done(_):
             self._fill_categories()
+            self.cat_title.configure(text="Marca lo que quieras limpiar y pulsa «Limpiar seleccionadas»")
             total = sum(c.size for c in cats)
             safe = sum(c.size for c in cats if c.risk == core.SAFE)
             self.set_status(f"Recuperable: {human(total)} · seguro: {human(safe)}")
@@ -1514,7 +2245,7 @@ class App(ctk.CTk):
             d.header("info", c.name, f"{len(items)} elementos · {human(sum(s for _, s in items))}")
             d.buttons([("Cerrar", "primary", None)])
             box = ctk.CTkTextbox(d.body, font=ctk.CTkFont(family=MONO_FONT, size=12), fg_color=C["bg"],
-                                 text_color=C["muted"], border_width=1, border_color=C["border"], corner_radius=10)
+                                 text_color=C["muted"], border_width=1, border_color=C["border"], corner_radius=8)
             box.pack(fill="both", expand=True, padx=24, pady=12)
             for p, s in items:
                 box.insert("end", f"{human(s):>10}   {p}\n")
@@ -1571,7 +2302,7 @@ class App(ctk.CTk):
         bar.pack(fill="x", pady=(0, 12))
         inner = ctk.CTkFrame(bar, fg_color="transparent")
         inner.pack(fill="x", padx=12, pady=12)
-        self.scan_path = ctk.CTkEntry(inner, height=38, corner_radius=10, font=F(13), fg_color=C["bg"],
+        self.scan_path = ctk.CTkEntry(inner, height=38, corner_radius=8, font=F(13), fg_color=C["bg"],
                                       border_color=C["border"], text_color=C["text"])
         self.scan_path.insert(0, core.SYSDRIVE if core.IS_WIN else core.HOME)
         self.scan_path.pack(side="left", fill="x", expand=True)
@@ -1604,16 +2335,24 @@ class App(ctk.CTk):
         self.map_title = ctk.CTkLabel(hdr, text="Contenido", font=F(15, "bold"), text_color=C["text"], anchor="w")
         self.map_title.pack(side="left")
         btn(hdr, "↑ Subir", lambda: self.sun.up(), "ghost", width=80).pack(side="right")
-        self.map_list = Table(side, [("name", "NOMBRE", 220, "w"), ("bar", "", 150, "w"), ("size", "TAMAÑO", 90, "e")],
-                              height=14, on_open=self._map_open_row,
-                              empty_text="Analiza un disco o una carpeta para ver su mapa")
+        self.map_list = Table(side, [("name", "NOMBRE", 200, "w"), ("pct", "%", 64, "e"),
+                                     ("size", "TAMAÑO", 96, "e")],
+                              height=14, on_open=self._map_open_row, icons=True,
+                              empty=("map", "Todavía no hay mapa",
+                                     "Analiza un disco o una carpeta para ver de un vistazo qué ocupa tu espacio.",
+                                     ("Analizar ahora", lambda: self.start_scan(self.scan_path.get()))))
         self.map_list.pack(fill="both", expand=True)
-        self.map_list.context_menu([("Entrar / abrir", lambda: self._map_open_row(self.map_list.focused())),
-                                    ("Vista previa   (Espacio)", lambda: self.preview(self.map_list.focused())),
-                                    ("Añadir al Colector", lambda: self._collect_nodes(self.map_list.selected())),
-                                    ("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(self.map_list.focused())),
-                                    ("Copiar ruta", lambda: self._copy_path(self.map_list.focused())), ("-", None),
-                                    ("Borrar…", lambda: self._delete_nodes(self.map_list.selected()))])
+        ml = self.map_list
+        self.map_list.context_menu([mi("Entrar / abrir", lambda: self._map_open_row(ml.focused()), "enter", "Doble clic"),
+                                    mi("Vista previa", lambda: self.preview(ml.focused()), "eye", "Espacio"),
+                                    SEP,
+                                    mi("Añadir al Colector", lambda: self._collect_nodes(ml.selected()), "add"),
+                                    mi("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(ml.focused()), "open"),
+                                    mi("Copiar ruta", lambda: self._copy_path(ml.focused()), "copy"),
+                                    SEP,
+                                    mi("Borrar…", lambda: self._delete_nodes(ml.selected()), "trash", "Supr",
+                                       danger=True)])
+        self.map_list.tv.bind("<Delete>", lambda e: self._delete_nodes(ml.selected()))
         self.map_list.tv.bind("<space>", lambda e: (self.preview(self.map_list.focused()), "break")[1])
         self.map_list.tv.bind("<BackSpace>", lambda e: self.sun.up())
         self.map_list.enable_drag(self._table_drag)
@@ -1711,16 +2450,21 @@ class App(ctk.CTk):
         if hidden:
             rows.append((hidden, "(espacio oculto: sistema, sin permisos…)", "hidden"))
         rows.sort(key=lambda r: r[0], reverse=True)
+        # mismo color que su sector en el mapa: la lista y los anillos se leen juntos
+        colors = {id(s[3]): s[4] for s in self.sun.segs if s[0] == 1 and s[3] is not None}
+        k = t.k
         for size, name, obj in rows:
             frac = size / total
-            blocks = int(round(frac * 10))
-            bar = "█" * blocks + "░" * (10 - blocks)
             is_node = isinstance(obj, core.Node)
             key = obj.path if is_node else node.path + ("<hidden>" if obj == "hidden" else "<files>")
-            prefix = ("▸  " if obj.children or obj.top_files else "    ") if is_node and not obj.is_file else \
-                "     " if is_node else "    "
-            t.add(key, [prefix + name, bar + f"  {frac * 100:.0f}%", human(size)],
-                  obj=obj if is_node else None, sort={"size": size}, tags=() if is_node else ("muted",))
+            if is_node:
+                col = colors.get(id(obj)) or C["faint"]
+                img = share_image(col, "file" if obj.is_file else "dir", frac, k)
+            else:
+                img = share_image(C["faint"], "other", frac, k)
+            pct = f"{frac * 100:.1f} %" if 0 < frac < 0.1 else f"{frac * 100:.0f} %"
+            t.add(key, [name, pct, human(size)], obj=obj if is_node else None,
+                  sort={"size": size, "pct": size}, tags=() if is_node else ("muted",), image=img)
 
     def _map_hover(self, node):
         if node is not None:
@@ -1739,15 +2483,19 @@ class App(ctk.CTk):
             self.preview(node)
 
     def _map_menu(self, node, e):
-        menu = tk.Menu(self, tearoff=0, bg=C["surface2"], fg=C["text"], activebackground=C["accent"],
-                       activeforeground="#ffffff", bd=0, relief="flat", font=(UI_FONT, 10))
-        menu.add_command(label="  Vista previa    ", command=lambda: self.preview(node))
-        menu.add_command(label="  Añadir al Colector    ", command=lambda: self._collect_nodes([node]))
-        menu.add_command(label=f"  Mostrar en el {FILE_MANAGER}    ", command=lambda: core.open_in_explorer(node.path))
-        menu.add_command(label="  Copiar ruta    ", command=lambda: self._copy_path(node))
-        menu.add_separator()
-        menu.add_command(label="  Borrar…    ", command=lambda: self._delete_nodes([node]))
-        menu.tk_popup(e.x_root, e.y_root)
+        items = []
+        if not node.is_file and (node.children or node.top_files):
+            items.append(mi("Entrar", lambda: self.sun.set_root(node), "enter", "Clic"))
+        items += [mi("Vista previa", lambda: self.preview(node), "eye"),
+                  SEP,
+                  mi("Añadir al Colector", lambda: self._collect_nodes([node]), "add"),
+                  mi("Mostrar en el " + FILE_MANAGER, lambda: core.open_in_explorer(node.path), "open"),
+                  mi("Copiar ruta", lambda: self._copy_path(node), "copy"),
+                  SEP,
+                  mi("Borrar…", lambda: self._delete_nodes([node]), "trash", danger=True)]
+        name = node.name if len(node.name) <= 42 else node.name[:40] + "…"
+        PopupMenu(self, items, e.x_root, e.y_root, title=name,
+                  subtitle=human(node.size) + ("  ·  archivo" if node.is_file else "  ·  carpeta"))
 
     def _open_node(self, node):
         if node is not None:
@@ -1894,7 +2642,7 @@ class App(ctk.CTk):
                     raw = fh.read(16000)
                 if b"\x00" not in raw[:4000]:
                     tb = ctk.CTkTextbox(box, font=ctk.CTkFont(family=MONO_FONT, size=12), fg_color=C["bg"],
-                                        text_color=C["muted"], border_width=0, corner_radius=10)
+                                        text_color=C["muted"], border_width=0, corner_radius=8)
                     tb.insert("end", raw.decode("utf-8", errors="replace"))
                     tb.configure(state="disabled")
                     tb.pack(fill="both", expand=True, padx=6, pady=6)
@@ -1994,14 +2742,34 @@ class App(ctk.CTk):
         top.pack(fill="x", pady=(0, 12))
         self.kind_box = ctk.CTkFrame(top, fg_color="transparent")
         self.kind_box.pack(fill="x", padx=20, pady=18)
-        ctk.CTkLabel(self.kind_box, text=EMPTY_SCAN, font=F(13), text_color=C["faint"]).pack(pady=20)
+        self._kinds_placeholder()
         self.section(page, "Extensiones que más ocupan")
         self.ext_table = Table(page, [("name", "EXTENSIÓN", 160, "w"), ("kind", "TIPO", 220, "w"),
                                       ("size", "TAMAÑO", 110, "e"), ("files", "ARCHIVOS", 110, "e"),
-                                      ("pct", "% DEL TOTAL", 110, "e")], height=7, empty_text=EMPTY_SCAN,
+                                      ("pct", "% DEL TOTAL", 110, "e")], height=7,
+                               empty=("list", "Sin datos todavía",
+                                      "Analiza un disco o una carpeta y aquí verás qué extensiones ocupan más.",
+                                      ("Ir al Mapa del disco", lambda: self.show("analyzer"))),
                                on_open=lambda ext: self._show_ext(ext))
         self.ext_table.pack(fill="both", expand=True)
         self.hint(page, "Doble clic en una extensión para ver sus archivos más grandes.")
+
+    def _kinds_placeholder(self):
+        """Barra apilada «fantasma» mientras no hay análisis: anticipa lo que aparecerá."""
+        ph = ctk.CTkFrame(self.kind_box, fg_color="transparent")
+        ph.pack(fill="x")
+        bar = ctk.CTkFrame(ph, fg_color="transparent", height=18)
+        bar.pack(fill="x", pady=(0, 16))
+        for i, (w, col) in enumerate(((5, 0.55), (3, 0.42), (2, 0.32), (1, 0.24))):
+            bar.grid_columnconfigure(i, weight=w, uniform="ph")
+            ctk.CTkFrame(bar, height=18, corner_radius=6, fg_color=_mix(C["track"], C["accent"], col * 0.35)
+                         ).grid(row=0, column=i, sticky="ew", padx=(0, 4))
+        row = ctk.CTkFrame(ph, fg_color="transparent")
+        row.pack(fill="x")
+        ctk.CTkLabel(row, text=icon("info"), font=IF(14), text_color=C["faint"]).pack(side="left", padx=(2, 10))
+        ctk.CTkLabel(row, text="Aquí verás el reparto por tipo de archivo (vídeos, programas, código…) "
+                               "en cuanto analices un disco o una carpeta.", font=F(12),
+                     text_color=C["muted"]).pack(side="left")
 
     def _fill_kinds(self):
         res = self.scan_result
@@ -2009,6 +2777,7 @@ class App(ctk.CTk):
             w.destroy()
         self.ext_table.clear()
         if not res:
+            self._kinds_placeholder()
             return
         total = res.root.size or 1
         kinds = res.kinds()
@@ -2067,7 +2836,7 @@ class App(ctk.CTk):
         bar.pack(fill="x", pady=(0, 12))
         ctk.CTkLabel(bar, text="Tamaño mínimo", font=F(12), text_color=C["muted"]).pack(side="left", padx=(0, 10))
         self.dup_min = ctk.CTkSegmentedButton(
-            bar, values=["1 MB", "10 MB", "100 MB"], font=F(12, "bold"), height=34, corner_radius=10,
+            bar, values=["1 MB", "10 MB", "100 MB"], font=F(12, "bold"), height=34, corner_radius=8,
             fg_color=C["surface"], selected_color=C["accent"], selected_hover_color=C["accent_h"],
             unselected_color=C["surface"], unselected_hover_color=C["hover"], text_color=C["text"])
         self.dup_min.set("10 MB")
@@ -2077,13 +2846,18 @@ class App(ctk.CTk):
         self.dup_info.pack(side="right")
         self.dup_table = Table(page, [("name", "ARCHIVO", 320, "w"), ("size", "TAMAÑO", 110, "e"),
                                       ("copies", "COPIAS", 90, "center"), ("path", "CARPETA", 420, "w")],
-                               checkable=True, tree=False, height=16, on_open=self._open_node,
-                               empty_text="Analiza un disco o carpeta y pulsa «Buscar duplicados»")
+                               checkable=True, height=16, on_open=self._open_node,
+                               empty=("copy", "Encuentra archivos repetidos",
+                                      "Compara por contenido los archivos del último análisis para quedarte "
+                                      "con una sola copia.", ("Buscar duplicados", self.find_dups)))
         self.dup_table.pack(fill="both", expand=True)
         self.dup_table.enable_drag(self._table_drag)
-        self.dup_table.context_menu([("Vista previa", lambda: self.preview(self.dup_table.focused())),
-                                     ("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(self.dup_table.focused())),
-                                     ("Añadir al Colector", lambda: self._collect_rows(self.dup_table, False))])
+        dt = self.dup_table
+        self.dup_table.context_menu([mi("Vista previa", lambda: self.preview(dt.focused()), "eye"),
+                                     mi("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(dt.focused()), "open",
+                                        "Doble clic"),
+                                     SEP,
+                                     mi("Añadir al Colector", lambda: self._collect_rows(dt, False), "add")])
         self.hint(page, "Compara tamaño y huella del contenido (BLAKE2), así que solo lista copias exactas. "
                         "«Marcar copias» deja sin marcar la primera de cada grupo.")
         self._dup_groups: list = []
@@ -2106,6 +2880,10 @@ class App(ctk.CTk):
                           sort={"size": g.size * 1000 - gi}, tags=() if pi else ("warn",))
             wasted = sum(g.wasted for g in groups)
             self.dup_info.configure(text=f"{len(groups)} grupos · {human(wasted)} recuperables")
+            if not groups:
+                t.set_empty("check", "Sin duplicados",
+                            "No hay copias exactas por encima del tamaño mínimo elegido. ¡Todo en orden!",
+                            ("Buscar de nuevo", self.find_dups))
         self.run_task("Buscando duplicados…", lambda report: core.find_duplicates(
             res, mins, self.cancel, lambda p: report(f"Comparando {p}")), done)
 
@@ -2163,20 +2941,20 @@ class App(ctk.CTk):
         bar.pack(fill="x", pady=(0, 12))
         self.min_size = ctk.CTkSegmentedButton(
             bar, values=["50 MB", "100 MB", "500 MB", "1 GB", "5 GB"], command=lambda _v: self._fill_bigfiles(),
-            font=F(12, "bold"), height=34, corner_radius=10, fg_color=C["surface"], selected_color=C["accent"],
+            font=F(12, "bold"), height=34, corner_radius=8, fg_color=C["surface"], selected_color=C["accent"],
             selected_hover_color=C["accent_h"], unselected_color=C["surface"], unselected_hover_color=C["hover"],
             text_color=C["text"])
         self.min_size.set("100 MB")
         self.min_size.pack(side="left")
-        self.ext_filter = ctk.CTkEntry(bar, width=300, height=34, corner_radius=10, font=F(12), fg_color=C["surface"],
+        self.ext_filter = ctk.CTkEntry(bar, width=300, height=34, corner_radius=8, font=F(12), fg_color=C["surface"],
                                        border_color=C["border"], text_color=C["text"],
                                        placeholder_text="Filtrar: .iso, .zip, .mp4, nombre…",
                                        placeholder_text_color=C["faint"])
         self.ext_filter.pack(side="left", padx=12)
         self.ext_filter.bind("<KeyRelease>", lambda e: self._fill_bigfiles())
         ctk.CTkLabel(bar, text="Sin tocar desde", font=F(12), text_color=C["muted"]).pack(side="left", padx=(4, 8))
-        self.age_filter = ctk.CTkOptionMenu(bar, values=["Cualquiera", "6 meses", "1 año", "2 años"], width=130,
-                                            height=34, corner_radius=10, font=F(12), fg_color=C["surface"],
+        self.age_filter = Select(bar, values=["Cualquiera", "6 meses", "1 año", "2 años"], width=130,
+                                            height=34, corner_radius=8, font=F(12), fg_color=C["surface"],
                                             button_color=C["surface2"], button_hover_color=C["hover"],
                                             dropdown_fg_color=C["surface2"], text_color=C["text"],
                                             command=lambda _v: self._fill_bigfiles())
@@ -2185,13 +2963,23 @@ class App(ctk.CTk):
         self.big_table = Table(page, [("name", "ARCHIVO", 280, "w"), ("size", "TAMAÑO", 110, "e"),
                                       ("type", "TIPO", 100, "center"), ("date", "MODIFICADO", 110, "center"),
                                       ("path", "CARPETA", 420, "w")],
-                               checkable=True, height=16, on_open=self._open_node, empty_text=EMPTY_SCAN)
+                               checkable=True, height=16, on_open=self._open_node,
+                               empty=("file", "Sin análisis todavía",
+                                      "Analiza un disco o una carpeta en «Mapa del disco» y aquí verás sus archivos "
+                                      "más pesados.", ("Ir al Mapa del disco", lambda: self.show("analyzer"))))
         self.big_table.pack(fill="both", expand=True)
         self.big_table.bind("<<CheckChanged>>", lambda e: self._update_checked_info(self.big_table, self.big_info))
         self.big_table.enable_drag(self._table_drag)
-        self.big_table.context_menu([("Vista previa", lambda: self.preview(self.big_table.focused())),
-                                     ("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(self.big_table.focused())),
-                                     ("Borrar…", lambda: self._delete_rows(self.big_table))])
+        bt = self.big_table
+        self.big_table.context_menu([mi("Vista previa", lambda: self.preview(bt.focused()), "eye"),
+                                     mi("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(bt.focused()), "open",
+                                        "Doble clic"),
+                                     SEP,
+                                     mi("Añadir al Colector", lambda: self._collect_rows(bt, False), "add"),
+                                     mi("Copiar ruta", lambda: self._copy_path(bt.focused()), "copy"),
+                                     SEP,
+                                     mi("Borrar…", lambda: self._delete_rows(bt), "trash", "Supr", danger=True)])
+        self.big_table.tv.bind("<Delete>", lambda e: self._delete_rows(bt))
         self.hint(page, "Clic en la casilla para marcar · doble clic lo muestra en el " + FILE_MANAGER +
                         " · arrastra filas al Colector.")
 
@@ -2219,6 +3007,9 @@ class App(ctk.CTk):
             n += 1
             total += size
         self.big_info.configure(text=f"{n} archivos · {human(total)}")
+        if not n:
+            t.set_empty("search", "Nada con estos filtros",
+                        "Prueba con un tamaño mínimo menor, otra antigüedad o borra el texto del filtro.")
 
     def _update_checked_info(self, table, label):
         objs = [o for o in table.checked_objs() if o]
@@ -2238,10 +3029,7 @@ class App(ctk.CTk):
 
     def _remove_rows(self, table, paths):
         gone = set(paths)
-        for p in paths:
-            if table.tv.exists(p):
-                table.tv.delete(p)
-            table.checked.discard(p)
+        table.remove(paths)
         if self.scan_result:
             self.scan_result.big_files = [x for x in self.scan_result.big_files if x[1] not in gone]
             self.scan_result.model_files = [x for x in self.scan_result.model_files if x[1] not in gone]
@@ -2257,7 +3045,8 @@ class App(ctk.CTk):
         btn(top, "Actualizar", self._fill_ollama, "ghost", width=100).pack(side="right", padx=6)
         self.ollama_table = Table(page, [("name", "MODELO", 360, "w"), ("size", "TAMAÑO", 110, "e"),
                                          ("path", "MANIFIESTO", 420, "w")], height=5,
-                                  empty_text="No se han encontrado modelos de Ollama")
+                                  empty=("ai", "Sin modelos de Ollama",
+                                         "Si usas Ollama, aquí verás cada modelo y lo que ocupa."))
         self.ollama_table.pack(fill="both", expand=True)
         mid, self.model_info = self.section(page, "Archivos de modelos",
                                             ".gguf · .safetensors · .ckpt · .pt · .onnx · .bin  (≥ 50 MB)", (18, 8))
@@ -2268,13 +3057,21 @@ class App(ctk.CTk):
         self.model_table = Table(page, [("name", "ARCHIVO", 300, "w"), ("size", "TAMAÑO", 110, "e"),
                                         ("app", "ORIGEN", 140, "w"), ("path", "CARPETA", 420, "w")],
                                  checkable=True, height=9, on_open=self._open_node,
-                                 empty_text="Pulsa «Buscar en mi usuario» (o analiza C:\\) para encontrarlos")
+                                 empty=("ai", "Busca modelos descargados",
+                                        "Pesos .gguf, .safetensors, .ckpt… de Hugging Face, LM Studio y otras apps.",
+                                        ("Buscar en mi usuario", lambda: self.start_scan(core.HOME))))
         self.model_table.pack(fill="both", expand=True)
         self.model_table.bind("<<CheckChanged>>",
                               lambda e: self._update_checked_info(self.model_table, self.model_info))
         self.model_table.enable_drag(self._table_drag)
-        self.model_table.context_menu([("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(self.model_table.focused())),
-                                       ("Borrar…", lambda: self._delete_rows(self.model_table))])
+        mt = self.model_table
+        self.model_table.context_menu([mi("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(mt.focused()),
+                                          "open", "Doble clic"),
+                                       mi("Copiar ruta", lambda: self._copy_path(mt.focused()), "copy"),
+                                       mi("Añadir al Colector", lambda: self._collect_rows(mt, False), "add"),
+                                       SEP,
+                                       mi("Borrar…", lambda: self._delete_rows(mt), "trash", "Supr", danger=True)])
+        self.model_table.tv.bind("<Delete>", lambda e: self._delete_rows(mt))
         self.hint(page, "Los modelos de Ollama se eliminan con «ollama rm» para no dejar la instalación inconsistente.")
         self.after(400, self._fill_ollama)
 
@@ -2349,24 +3146,37 @@ class App(ctk.CTk):
                                        ("publisher", "EDITOR", 190, "w"), ("date", "INSTALADA", 100, "center"),
                                        ("path", "UBICACIÓN", 320, "w")], height=9,
                                 on_open=lambda a: a and a.location and core.open_in_explorer(a.location),
-                                empty_text="Pulsa «Cargar aplicaciones»")
+                                empty=("apps", "Tus aplicaciones instaladas",
+                                       "Carga la lista para ver cuánto ocupa cada programa y desinstalar lo que "
+                                       "no uses.", ("Cargar aplicaciones", self.load_apps)))
         self.apps_table.pack(fill="both", expand=True)
-        self.apps_table.context_menu([("Abrir ubicación", self._open_app), ("Desinstalar…", self._uninstall)])
+        self.apps_table.context_menu([mi("Abrir ubicación", self._open_app, "open", "Doble clic"),
+                                      SEP,
+                                      mi("Desinstalar…", self._uninstall, "trash", danger=True)])
         mid, self.res_info = self.section(page, "Posibles restos",
                                           "Carpetas de 20 MB o más que no coinciden con ninguna app instalada", (18, 8))
         btn(mid, "Borrar marcados…", lambda: self._delete_checked(self.res_table), "danger", width=160
             ).pack(side="right")
         btn(mid, "Al Colector", lambda: self._collect_rows(self.res_table), "secondary", width=110
-            ).pack(side="right", padx=(8, 0))
-        btn(mid, "Buscar restos", self.find_residues, "secondary", width=130).pack(side="right", padx=8)
+            ).pack(side="right", padx=8)
+        btn(mid, "Buscar restos", self.find_residues, "secondary", width=130).pack(side="right")
         self.res_table = Table(page, [("name", "CARPETA", 300, "w"), ("size", "TAMAÑO", 110, "e"),
                                       ("where", "DÓNDE", 180, "w"), ("path", "RUTA", 420, "w")],
-                               checkable=True, height=7, on_open=self._open_node, empty_text="Pulsa «Buscar restos»")
+                               checkable=True, height=7, on_open=self._open_node,
+                               empty=("search", "Restos de apps desinstaladas",
+                                      "Busca carpetas grandes que ya no pertenecen a ningún programa.",
+                                      ("Buscar restos", self.find_residues)))
         self.res_table.pack(fill="both", expand=True)
         self.res_table.bind("<<CheckChanged>>", lambda e: self._update_checked_info(self.res_table, self.res_info))
         self.res_table.enable_drag(self._table_drag)
-        self.res_table.context_menu([("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(self.res_table.focused())),
-                                     ("Borrar…", lambda: self._delete_rows(self.res_table))])
+        rt = self.res_table
+        self.res_table.context_menu([mi("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(rt.focused()), "open",
+                                        "Doble clic"),
+                                     mi("Copiar ruta", lambda: self._copy_path(rt.focused()), "copy"),
+                                     mi("Añadir al Colector", lambda: self._collect_rows(rt, False), "add"),
+                                     SEP,
+                                     mi("Borrar…", lambda: self._delete_rows(rt), "trash", "Supr", danger=True)])
+        self.res_table.tv.bind("<Delete>", lambda e: self._delete_rows(rt))
         self.hint(page, "Es una estimación: abre cada carpeta y revísala antes de borrar. Por defecto va a la Papelera.")
 
     def load_apps(self):
@@ -2472,7 +3282,7 @@ class App(ctk.CTk):
                          border_color=C["accent"])
         b.grid(row=0, column=0, sticky="ew", padx=30, pady=(18, 0))
         b.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(b, text="↑", font=F(18, "bold"), width=36, height=36, corner_radius=10,
+        ctk.CTkLabel(b, text="↑", font=F(18, "bold"), width=36, height=36, corner_radius=8,
                      fg_color=C["accent"], text_color="#ffffff").grid(row=0, column=0, rowspan=2, padx=(14, 12),
                                                                       pady=12)
         self.upd_title = ctk.CTkLabel(b, text="", font=F(14, "bold"), text_color=C["text"], anchor="w")
