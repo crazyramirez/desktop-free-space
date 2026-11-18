@@ -8,3 +8,4 @@ __pycache__/
 generar_portada.py
 generar_portada.bat
 docs/hero_model.txt
+releases/
