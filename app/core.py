@@ -1734,15 +1734,12 @@ def _mac_bundle() -> str | None:
     return None
 
 
-# Espera a que se cierre la app, como mucho ~2 min (por si el PID lo reutiliza otro proceso).
+# Espera a que se cierre la app, como mucho 2 min, sin bucles (Wait-Process de PowerShell).
 _WIN_WAIT = [
-    "set /a W=0",
-    ":wait",
-    "set /a W+=1",
-    "if %W% gtr 120 goto waited",
-    'tasklist /NH /FI "PID eq %PID%" 2>nul | findstr /C:" %PID% " >nul',
-    "if not errorlevel 1 (ping -n 2 127.0.0.1 >nul & goto wait)",
-    ":waited",
+    'powershell -NoProfile -NonInteractive -WindowStyle Hidden -Command '
+    '"Wait-Process -Id %PID% -Timeout 120 -ErrorAction SilentlyContinue" >nul 2>nul',
+    # por si PowerShell no está disponible
+    "ping -n 3 127.0.0.1 >nul",
 ]
 
 # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP. Nunca DETACHED_PROCESS: sin consola propia, cada tasklist/findstr
@@ -1780,6 +1777,18 @@ def _win_update_script(new: str, exe: str, pid: int) -> str:
     ]) + "\r\n"
 
 
+def _dir_writable(folder: str) -> bool:
+    """Comprobación real (os.access no mira los permisos NTFS)."""
+    probe = os.path.join(folder, f".dfs-write-test-{os.getpid()}")
+    try:
+        with open(probe, "wb"):
+            pass
+        os.remove(probe)
+        return True
+    except OSError:
+        return False
+
+
 def apply_update(path: str, exe: str | None = None, pid: int | None = None) -> str:
     """Instala la descarga. Devuelve 'restart' (cerrar la app para terminar) u 'opened' (se abrió el instalador
     para que lo termine el usuario). Lanza excepción si no se puede."""
@@ -1807,6 +1816,9 @@ def apply_update(path: str, exe: str | None = None, pid: int | None = None) -> s
         return "opened"
     if IS_WIN:
         import tempfile
+        if not _dir_writable(os.path.dirname(exe)):
+            raise RuntimeError(f"No tengo permiso para escribir en {os.path.dirname(exe)}. Mueve la app a otra "
+                               "carpeta (por ejemplo Documentos) o usa el instalador DesktopFreeSpace-Setup.exe.")
         pid = pid or os.getpid()
         script = os.path.join(tempfile.gettempdir(), f"dfs-update-{pid}.cmd")
         with open(script, "w", encoding="mbcs", errors="replace") as fh:
