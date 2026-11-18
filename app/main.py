@@ -5,9 +5,11 @@ import colorsys
 import math
 import os
 import queue
+import random
 import shutil
 import sys
 import threading
+import time
 import tkinter as tk
 import traceback
 from tkinter import filedialog, font as tkfont, ttk
@@ -19,7 +21,7 @@ import core  # noqa: E402
 from core import human  # noqa: E402
 
 APP_NAME = "Desktop Free Space"
-VERSION = "2.6.0"
+VERSION = "2.7.0"
 
 # ---------------------------------------------------------------------------
 # Sistema visual
@@ -572,6 +574,10 @@ class EmptyState(ctk.CTkFrame):
         self._level = None
         self.fit(10 ** 6)
 
+    def fit_width(self, width):
+        """El texto se ajusta al ancho del panel (paneles estrechos como el del Mapa)."""
+        self.text.configure(wraplength=max(200, min(520, int(width / self.k) - 70)))
+
     def fit(self, avail):
         """Muestra todo lo que quepa en `avail` píxeles de alto: insignia, título, texto y botón."""
         k = self.k
@@ -660,7 +666,8 @@ class Table(ctk.CTkFrame):
         self.tv.tag_configure("muted", foreground=C["faint"])
         self.empty = EmptyState(self, *empty) if empty else None
         if self.empty is not None:
-            self.bind("<Configure>", lambda e: self.empty.fit(e.height - 70 * self.k), add="+")
+            self.bind("<Configure>", lambda e: (self.empty.fit_width(e.width),
+                                                self.empty.fit(e.height - 70 * self.k)), add="+")
         self._update_empty()
         if checkable:
             self.tv.bind("<Button-1>", self._on_click, add="+")
@@ -686,7 +693,8 @@ class Table(ctk.CTkFrame):
         """Cambia el mensaje de lista vacía (p. ej. «sin resultados» tras filtrar)."""
         if self.empty is None:
             self.empty = EmptyState(self, ico, title, text, action)
-            self.bind("<Configure>", lambda e: self.empty.fit(e.height - 70 * self.k), add="+")
+            self.bind("<Configure>", lambda e: (self.empty.fit_width(e.width),
+                                                self.empty.fit(e.height - 70 * self.k)), add="+")
         else:
             self.empty.set(ico, title, text, action)
         self.empty.fit(self.winfo_height() - 70 * self.k if self.winfo_height() > 1 else 10 ** 6)
@@ -1163,6 +1171,422 @@ def seg_color(mid_deg: float, depth: int, is_file: bool = False) -> str:
     return hsl(hue, sat, min(lig, 0.8))
 
 
+# ---------------------------------------------------------------------------
+# Animación del análisis: mapa que crece en vivo, cometas, iconos en órbita y partículas
+# ---------------------------------------------------------------------------
+SCAN_ORBS = [  # (glifo Segoe Fluent/MDL2, color 1, color 2): tipos de archivo que orbitan mientras se analiza
+    ("", "#4f8bff", "#7f7bff"),   # carpeta
+    ("", "#38d0c4", "#3fc1ff"),   # imágenes
+    ("", "#ff6b8b", "#c56cf0"),   # vídeo
+    ("", "#ff9f43", "#ff6b8b"),   # música
+    ("", "#5ee08a", "#38d0c4"),   # código
+    ("", "#ffd23f", "#ff9f43"),   # comprimidos
+    ("", "#7f7bff", "#c56cf0"),   # documentos
+    ("", "#c56cf0", "#ff7eb6"),   # modelos de IA
+]
+
+
+def _ease_out_back(t):
+    t = min(max(t, 0.0), 1.0) - 1
+    return 1 + 2.2 * t ** 3 + 1.2 * t ** 2
+
+
+def _ease_in_cubic(t):
+    return t * t * t
+
+
+class ScanFX:
+    """Animación del visor mientras se analiza. Lo caro (anillos con suavizado) se dibuja ~10 veces por
+    segundo y solo en la zona central; lo que se mueve (cometas, órbitas, partículas, contadores) son
+    imágenes ya preparadas que solo cambian de sitio, para no frenar el análisis."""
+
+    FPS_MS = 30
+    RING_MS = 100
+
+    def __init__(self, canvas):
+        self.cv = canvas
+        self.job = None
+        self.items: dict = {}
+        self.size = None
+
+    # -- ciclo de vida --
+    def start(self, root_path):
+        self.stop()
+        now = time.perf_counter()
+        self.root = root_path
+        self.tree = [0, 1.0, {}]      # [bytes, fracción mostrada de su padre, {nombre: nodo}] (3 niveles)
+        self.n = self.b = 0
+        self.shown_n = self.shown_b = 0.0
+        self.active: list[str] = []
+        self.last_text = 0.0
+        self.path = ""
+        self.t0 = now
+        self.last_ring = 0.0
+        self.dirty = True
+        self.rate_hist = [(now, 0)]
+        self.particles: list[dict] = []
+        self.spawn_acc = 0.0
+        self.last_t = now
+        self.size = None
+        self._tick()
+
+    def stop(self):
+        if self.job is not None:
+            self.cv.after_cancel(self.job)
+            self.job = None
+        self.items = {}
+        self.size = None
+
+    @property
+    def running(self):
+        return self.job is not None
+
+    def progress(self, n, b, p):
+        delta = max(0, b - self.b)
+        self.n, self.b, self.path = n, b, p or self.path
+        try:
+            rel = os.path.relpath(p, self.root) if p else "."
+        except ValueError:
+            rel = "."
+        parts = [x for x in rel.replace("\\", "/").split("/") if x and x != "."]
+        if parts and parts[0] == "..":
+            parts = []
+        node = self.tree
+        node[0] += delta
+        for part in parts[:3]:
+            node = node[2].setdefault(part, [0, 0.0, {}])
+            node[0] += delta
+        self.active = parts[:3]
+        now = time.perf_counter()
+        self.rate_hist.append((now, n))
+        while len(self.rate_hist) > 2 and now - self.rate_hist[0][0] > 2.5:
+            self.rate_hist.pop(0)
+        self.dirty = True
+
+    # -- recursos que dependen del tamaño --
+    def _build(self):
+        cv = self.cv
+        cv.delete("all")
+        self.items = {}
+        w, h = max(cv.winfo_width(), 50), max(cv.winfo_height(), 50)
+        cx, cy, rad = cv.geometry_()
+        self.k = k = _scale_of(cv)
+        self.geo = (w, h, cx, cy, rad)
+        self.size = (w, h)
+        self.r_comet1 = (rad[2] + rad[3]) / 2
+        self.r_orbit = (rad[3] + rad[4]) / 2
+        self.r_comet2 = rad[5] - 5 * k
+        self.r_spawn = rad[5] + 8 * k
+        self.bg_photo = ImageTk.PhotoImage(self._background(w, h, cx, cy, rad))
+        I = self.items
+        I["bg"] = cv.create_image(0, 0, anchor="nw", image=self.bg_photo)
+        I["rings"] = cv.create_image(cx, cy, anchor="center")
+        # partículas (debajo del núcleo: el centro las «absorbe»)
+        self.pal = ["#4f8bff", "#38d0c4", "#5ee08a", "#ffd23f", "#ff9f43", "#ff6b8b", "#c56cf0", "#7f7bff"]
+        self.p_sprites = {c: [self._glow(c, max(1.5, (5.2 - 0.5 * i) * k), 0.9 - 0.09 * i) for i in range(8)]
+                          for c in self.pal}
+        self.p_pool = [cv.create_image(-99, -99) for _ in range(44)]
+        # cometas
+        self.c1_sprites = [self._glow(_mix("#dbe7ff", _mix(C["accent"], C["accent2"], i / 24), min(1, i / 4)),
+                                      max(1.5, (8.5 - 0.3 * i) * k), (1 - i / 26) ** 1.6) for i in range(24)]
+        self.c2_sprites = [self._glow(_mix("#ffe1f0", _mix(C["accent2"], "#ff6b8b", i / 16), min(1, i / 3)),
+                                      max(1.4, (8 - 0.4 * i) * k), (1 - i / 18) ** 1.6) for i in range(16)]
+        I["c1"] = [cv.create_image(-99, -99, image=im) for im in reversed(self.c1_sprites)][::-1]
+        I["c2"] = [cv.create_image(-99, -99, image=im) for im in reversed(self.c2_sprites)][::-1]
+        # iconos en órbita
+        self.orb_imgs = [self._orb(g, c1, c2, round(40 * k)) for g, c1, c2 in SCAN_ORBS]
+        I["orbs"] = [cv.create_image(cx, cy, image=im) for im in self.orb_imgs]
+        # núcleo: onda pulsante, disco y textos
+        r0 = rad[0] - 3
+        self.ripples = [self._ripple(r0, i / 24) for i in range(24)]
+        I["ripple"] = cv.create_image(cx, cy)
+        self.core_photo = self._core(r0)
+        I["core"] = cv.create_image(cx, cy, image=self.core_photo)
+        I["t_label"] = cv.create_text(cx, cy - 26 * k, text="A N A L I Z A N D O", fill=C["accent"],
+                                      font=(UI_FONT, 8, "bold"))
+        I["t_big"] = cv.create_text(cx, cy, text="0 B", fill=C["text"], font=(UI_FONT, 19, "bold"))
+        I["t_files"] = cv.create_text(cx, cy + 24 * k, text="0 archivos", fill=C["muted"], font=(UI_FONT, 10))
+        self.last_ring = 0.0
+        self.dirty = True
+
+    def _background(self, w, h, cx, cy, rad):
+        ss = 2
+        im = Image.new("RGB", (w * ss, h * ss), C["surface"])
+        # halo suave detrás del centro
+        glow = Image.new("L", (w * ss // 4, h * ss // 4), 0)
+        gr = rad[2] * ss / 4
+        ImageDraw.Draw(glow).ellipse((cx * ss / 4 - gr, cy * ss / 4 - gr, cx * ss / 4 + gr, cy * ss / 4 + gr), fill=70)
+        from PIL import ImageFilter
+        glow = glow.filter(ImageFilter.GaussianBlur(gr * 0.45)).resize((w * ss, h * ss), Image.BILINEAR)
+        im = Image.composite(Image.new("RGB", im.size, _mix(C["surface"], C["accent"], 0.55)), im, glow)
+        d = ImageDraw.Draw(im)
+        X, Y = cx * ss, cy * ss
+        # huecos de los anillos que se irán llenando
+        ghost = _mix(C["surface"], C["track"], 0.7)
+        for depth in (1, 2):
+            r1, r2 = (rad[depth - 1] + 1.4) * ss, (rad[depth] - 1.4) * ss
+            d.ellipse((X - r2, Y - r2, X + r2, Y + r2), fill=ghost)
+            d.ellipse((X - r1, Y - r1, X + r1, Y + r1), fill=C["surface"])
+        # órbitas punteadas
+        for r, step, col in ((self.r_comet1, 3.0, C["border"]), (self.r_orbit, 2.0, _mix(C["border"], C["surface"], .3)),
+                             (self.r_comet2, 3.0, C["border"])):
+            for i in range(int(360 / step)):
+                a = math.radians(i * step)
+                px, py = X + r * ss * math.sin(a), Y - r * ss * math.cos(a)
+                s = 1.1 * ss
+                d.ellipse((px - s, py - s, px + s, py + s), fill=col)
+        # dial exterior con marcas, como un instrumento
+        R = rad[5] + 3
+        for i in range(120):
+            a = math.radians(i * 3)
+            long_ = i % 10 == 0
+            r1 = (R + (2 if long_ else 4)) * ss
+            r2 = (R + 10) * ss
+            col = _mix(C["faint"], C["surface"], 0.2 if long_ else 0.55)
+            d.line((X + r1 * math.sin(a), Y - r1 * math.cos(a), X + r2 * math.sin(a), Y - r2 * math.cos(a)),
+                   fill=col, width=ss * (2 if long_ else 1))
+        return im.resize((w, h), Image.LANCZOS)
+
+    def _glow(self, color, radius, alpha):
+        """Punto luminoso con halo (sprite con transparencia)."""
+        r = max(1.0, radius)
+        n = int(r * 3) * 2 + 3
+        S = 4
+        im = Image.new("RGBA", (n * S, n * S), _rgb(color) + (0,))
+        d = ImageDraw.Draw(im)
+        c = n * S / 2
+        for i in range(10, 0, -1):  # halo: círculos concéntricos cada vez más transparentes
+            rr = r * S * (1 + 1.6 * i / 10)
+            d.ellipse((c - rr, c - rr, c + rr, c + rr), fill=_rgb(color) + (int(255 * alpha * 0.05),))
+        rr = r * S
+        d.ellipse((c - rr, c - rr, c + rr, c + rr), fill=_rgb(_mix(color, "#ffffff", 0.35)) + (int(255 * alpha),))
+        return ImageTk.PhotoImage(im.resize((n, n), Image.LANCZOS))
+
+    def _orb(self, glyph, c1, c2, px):
+        """Insignia redonda con degradado, brillo y el icono en blanco."""
+        S = px * 4
+        im = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+        a, b = _rgb(c1), _rgb(c2)
+        d = ImageDraw.Draw(im)
+        d.ellipse((0, 0, S - 1, S - 1), fill=a + (40,))
+        m = S * 0.12
+        n = int(S - 2 * m)
+        grad = Image.new("RGBA", (n, n))
+        gd = ImageDraw.Draw(grad)
+        for i in range(2 * n):
+            t = i / (2 * n - 1)
+            gd.line((i, 0, 0, i), fill=tuple(int(x + (y - x) * t) for x, y in zip(a, b)) + (255,), width=2)
+        mask = Image.new("L", (n, n), 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, n - 1, n - 1), fill=255)
+        im.paste(grad, (int(m), int(m)), mask)
+        d = ImageDraw.Draw(im)
+        d.ellipse((m, m, S - 1 - m, S - 1 - m), outline=(255, 255, 255, 70), width=max(2, S // 60))
+        font_file = _icon_font_file()
+        if font_file:
+            try:
+                from PIL import ImageFont
+                d.text((S / 2, S / 2), glyph, font=ImageFont.truetype(font_file, int(S * 0.34)),
+                       fill=(255, 255, 255, 255), anchor="mm")
+            except Exception:  # noqa: BLE001
+                pass
+        return ImageTk.PhotoImage(im.resize((px, px), Image.LANCZOS))
+
+    def _ripple(self, r0, t):
+        k = self.k
+        rr = r0 * (1.0 + 0.55 * t)
+        n = int(r0 * 1.6) * 2 + 4
+        S = 2
+        im = Image.new("RGBA", (n * S, n * S), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        c = n * S / 2
+        a = int(150 * (1 - t) ** 1.8)
+        col = _rgb(_mix(C["accent"], C["accent2"], t)) + (a,)
+        lw = max(2, int(2.2 * k * S * (1 - 0.5 * t)))
+        d.ellipse((c - rr * S, c - rr * S, c + rr * S, c + rr * S), outline=col, width=lw)
+        return ImageTk.PhotoImage(im.resize((n, n), Image.LANCZOS))
+
+    def _core(self, r0):
+        S = 4
+        n = int(r0) * 2 + 4
+        im = Image.new("RGBA", (n * S, n * S), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        c = n * S / 2
+        R = r0 * S
+        top, bot = _rgb(_mix(C["surface2"], "#ffffff", 0.05)), _rgb(_mix(C["surface"], "#000000", 0.15))
+        steps = 24
+        for i in range(steps):  # disco con un degradado vertical suave
+            t = i / (steps - 1)
+            rr = R * (1 - i / steps * 0.04)
+            col = tuple(int(x + (y - x) * t) for x, y in zip(top, bot))
+            d.ellipse((c - rr, c - rr + i * 0.0, c + rr, c + rr), fill=col + (255,))
+        ring = Image.new("RGBA", im.size, (0, 0, 0, 0))
+        rd = ImageDraw.Draw(ring)
+        a1, a2 = _rgb(C["accent"]), _rgb(C["accent2"])
+        lw = max(3, int(2.4 * self.k * S))
+        for i in range(36):  # borde con degradado azul → violeta alrededor
+            t = abs((i / 36) * 2 - 1)
+            col = tuple(int(x + (y - x) * t) for x, y in zip(a1, a2)) + (255,)
+            rd.arc((c - R, c - R, c + R, c + R), i * 10 - 90, i * 10 - 80 + 1, fill=col, width=lw)
+        im.alpha_composite(ring)
+        return ImageTk.PhotoImage(im.resize((n, n), Image.LANCZOS))
+
+    # -- anillos en vivo --
+    def _base(self):
+        """Nivel que se muestra: si una carpeta lo ocupa casi todo (el análisis va por ella), se baja un
+        nivel para que los anillos enseñen variedad; se vuelve arriba en cuanto aparecen hermanas."""
+        path, node = [], self.tree
+        while len(path) < 2:
+            kids = [(k, v) for k, v in node[2].items() if v[0] > 0]
+            if len(kids) == 1 and kids[0][1][0] >= node[0] * 0.97 and kids[0][1][2]:
+                path.append(kids[0][0])
+                node = kids[0][1]
+            else:
+                break
+        return path, node
+
+    def _render_rings(self, intro):
+        w, h, cx, cy, rad = self.geo
+        ss = 2
+        R = rad[2] + 8 * self.k
+        side = int(2 * R) + 4
+        im = Image.new("RGBA", (side * ss, side * ss), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        X = Y = side * ss / 2
+        path, base = self._base()
+        if base[0] <= 0:
+            return None
+        act = self.active[len(path):] if self.active[:len(path)] == path else []
+        grow = 0.75 + 0.25 * intro
+        settled = True
+
+        def ring(node, depth, a0, span, active):
+            nonlocal settled
+            a = a0
+            for name, v in node[2].items():
+                if v[0] <= 0:
+                    continue
+                frac = v[0] / node[0] if node[0] else 0  # la fracción mostrada se acerca a la real
+                v[1] += (frac - v[1]) * 0.3
+                settled &= abs(frac - v[1]) < 0.002
+                sp = span * v[1]
+                if sp >= (0.3 if depth == 1 else 0.6):
+                    on = bool(active) and name == active[0]
+                    r1 = (rad[depth - 1] + 1.4) * grow
+                    r2 = (rad[depth] - 1.4) * grow + ((4 + depth) * self.k if on else 0)
+                    col = seg_color(a + sp / 2, depth)
+                    pts = _arc_pts(X, Y, r2 * ss, a, a + sp) + list(reversed(_arc_pts(X, Y, r1 * ss, a, a + sp)))
+                    d.polygon(pts, fill=_mix(col, "#ffffff", 0.18) if on else col, outline=C["surface"], width=ss)
+                    if depth == 1 and v[2]:
+                        ring(v, 2, a, sp, active[1:] if on else [])
+                a += sp
+        ring(base, 1, 0.0, 360.0 * intro, act)
+        self.dirty = not settled
+        return ImageTk.PhotoImage(im.resize((side, side), Image.LANCZOS))
+
+    # -- fotograma --
+    def _tick(self):
+        cv = self.cv
+        try:
+            if not cv.winfo_exists():
+                return
+            if (max(cv.winfo_width(), 50), max(cv.winfo_height(), 50)) != self.size:
+                self._build()
+            now = time.perf_counter()
+            self.frame_start = now
+            dt = min(0.1, now - self.last_t)
+            self.last_t = now
+            t = now - self.t0
+            fade = min(1.0, t / 0.5)
+            w, h, cx, cy, rad = self.geo
+            I = self.items
+            # anillos (caros): ~10 veces por segundo y solo si algo cambió
+            if (self.dirty or t < 1.0) and now - self.last_ring >= self.RING_MS / 1000:
+                self.last_ring = now
+                ph = self._render_rings(min(1.0, t / 0.8))
+                if ph is not None:
+                    self.rings_photo = ph
+                    cv.itemconfigure(I["rings"], image=ph)
+            # cometas
+            for items, sprites, r, speed, gap in ((I["c1"], self.c1_sprites, self.r_comet1, 150, 3.2),
+                                                  (I["c2"], self.c2_sprites, self.r_comet2, -70, 3.6)):
+                head = (t * speed) % 360
+                for i, it in enumerate(items):
+                    ang = math.radians(head - math.copysign(gap * i, speed))
+                    cv.coords(it, cx + r * math.sin(ang), cy - r * math.cos(ang))
+            # iconos en órbita: salen del centro al empezar y flotan
+            n = len(I["orbs"])
+            for i, it in enumerate(I["orbs"]):
+                ang = math.radians(i * 360 / n + t * 14)
+                bob = math.sin(t * 2.2 + i * 1.3) * 5 * self.k
+                r = rad[0] + (self.r_orbit - rad[0]) * _ease_out_back(max(0.0, (t - i * 0.05) / 0.9)) + bob
+                cv.coords(it, cx + r * math.sin(ang), cy - r * math.cos(ang))
+            # partículas: más cuanto más rápido avanza el análisis
+            rate = self.rate()
+            self.spawn_acc += dt * (4 + min(14.0, rate / 800)) * fade
+            while self.spawn_acc >= 1 and len(self.particles) < len(self.p_pool):
+                self.spawn_acc -= 1
+                self.particles.append(dict(a=random.uniform(0, 360), t0=now, dur=random.uniform(0.9, 1.7),
+                                           col=random.choice(self.pal), swirl=random.uniform(25, 70),
+                                           item=None))
+            self.spawn_acc = min(self.spawn_acc, 3)
+            free = [p for p in self.p_pool]
+            alive = []
+            for p in self.particles:
+                pt = (now - p["t0"]) / p["dur"]
+                if pt >= 1:
+                    continue
+                alive.append(p)
+            self.particles = alive
+            for p, it in zip(alive, free):
+                pt = (now - p["t0"]) / p["dur"]
+                e = _ease_in_cubic(pt)
+                r = self.r_spawn + (rad[0] * 0.85 - self.r_spawn) * e
+                ang = math.radians(p["a"] + p["swirl"] * e)
+                cv.coords(it, cx + r * math.sin(ang), cy - r * math.cos(ang))
+                cv.itemconfigure(it, image=self.p_sprites[p["col"]][min(7, int(pt * 8))])
+            for it in free[len(alive):]:
+                cv.coords(it, -99, -99)
+            # onda del núcleo
+            cv.itemconfigure(I["ripple"], image=self.ripples[int(t * 16) % len(self.ripples)])
+            # contadores que «ruedan» hasta el valor real
+            self.shown_n += (self.n - self.shown_n) * 0.18
+            self.shown_b += (self.b - self.shown_b) * 0.18
+            cv.itemconfigure(I["t_big"], text=human(int(self.shown_b)))
+            cv.itemconfigure(I["t_files"], text=f"{int(round(self.shown_n)):,} archivos".replace(",", "."))
+            pulse = 0.5 + 0.5 * math.sin(t * 3)
+            cv.itemconfigure(I["t_label"], fill=_mix(C["accent"], "#bcd0ff", pulse * 0.6))
+            if cv.on_scan_text and now - self.last_text >= 0.25:
+                self.last_text = now
+                m, s_ = divmod(int(t), 60)
+                speed = f"{int(rate):,} archivos/s".replace(",", ".") if rate >= 1 else "preparando…"
+                cv.on_scan_text(f"{m}:{s_:02d}   ·   {speed}   ·   {self._short_path()}")
+        except tk.TclError:
+            self.job = None
+            return
+        spent = (time.perf_counter() - getattr(self, "frame_start", 0)) * 1000
+        self.job = cv.after(max(4, int(self.FPS_MS - spent)), self._tick)
+
+    def rate(self):
+        if len(self.rate_hist) < 2:
+            return 0.0
+        (t0, n0), (t1, n1) = self.rate_hist[0], self.rate_hist[-1]
+        return (n1 - n0) / (t1 - t0) if t1 > t0 else 0.0
+
+    def _short_path(self):
+        p = self.path or self.root
+        try:
+            rel = os.path.relpath(p, self.root)
+        except ValueError:
+            rel = p
+        parts = [x for x in rel.replace("\\", "/").split("/") if x and x != "."]
+        if not parts:
+            return os.path.basename(self.root.rstrip("\\/")) or self.root
+        if len(parts) > 3:
+            parts = parts[:1] + ["…"] + parts[-2:]
+        txt = "  ›  ".join(parts)
+        return txt if len(txt) <= 90 else "…" + txt[-88:]
+
+
 class Sunburst(tk.Canvas):
     """Mapa circular por niveles: cada anillo es un nivel de carpetas, el ángulo es su tamaño."""
 
@@ -1189,6 +1613,8 @@ class Sunburst(tk.Canvas):
         self._spin = None
         self._spin_a = 0
         self.scan_text = ""
+        self.fx = ScanFX(self)
+        self.on_scan_text = None  # recibe «tiempo · velocidad · ruta» mientras se analiza
         self._press = None
         self._dragging = False
         self.bind("<Configure>", lambda e: self._schedule())
@@ -1230,15 +1656,29 @@ class Sunburst(tk.Canvas):
         self.set_root(node, push=False)
 
     # -- análisis en curso --
-    def start_scanning(self, text=""):
-        self.scan_text = text
-        if self._spin is None:
+    def start_scanning(self, root_path=""):
+        self.stop_scanning()
+        self.hover_seg = None
+        if Image is not None:
+            self._spin = "fx"
+            self.fx.start(root_path)
+        else:  # sin Pillow: indicador sencillo
+            self.scan_text = "Preparando…"
             self._spin_tick()
 
+    def scan_progress(self, n, b, p):
+        if self.fx.running:
+            self.fx.progress(n, b, p)
+        else:
+            self.scan_text = f"{n:,} archivos · {human(b)}".replace(",", ".")
+
     def stop_scanning(self):
-        if self._spin is not None:
+        if self.fx.running:
+            self.fx.stop()
+            self.delete("all")
+        elif self._spin not in (None, "fx"):
             self.after_cancel(self._spin)
-            self._spin = None
+        self._spin = None
 
     def _spin_tick(self):
         self._spin_a = (self._spin_a + 9) % 360
@@ -1487,6 +1927,8 @@ class Sunburst(tk.Canvas):
             self.on_hover(node)
 
     def _motion(self, e):
+        if self._spin is not None:
+            return
         if self.root_node is None or self._dragging:
             return
         seg = self._hit(e.x, e.y)
@@ -1494,10 +1936,14 @@ class Sunburst(tk.Canvas):
             self._set_hover(seg)
 
     def _b1_down(self, e):
+        if self._spin is not None:
+            return
         self._press = (e.x, e.y)
         self._dragging = False
 
     def _b1_move(self, e):
+        if self._spin is not None:
+            return
         if not self._press or self.root_node is None:
             return
         if not self._dragging:
@@ -1513,6 +1959,8 @@ class Sunburst(tk.Canvas):
             self.on_drag("move", None, e)
 
     def _b1_up(self, e):
+        if self._spin is not None:
+            return
         if self._dragging:
             self._dragging = False
             self._press = None
@@ -1533,6 +1981,8 @@ class Sunburst(tk.Canvas):
                 self.set_root(seg[3])
 
     def _right(self, e):
+        if self._spin is not None:
+            return
         seg = self._hit(e.x, e.y)
         if seg and seg != "center" and seg[3] is not None and self.on_context:
             self.on_context(seg[3], e)
@@ -1842,7 +2292,7 @@ class App(ctk.CTk):
                 if kind == "status":
                     last_status = payload
                 elif kind == "scan":
-                    self.sun.scan_text = payload
+                    self.sun.scan_progress(*payload)
                 elif kind == "update":
                     self._on_update_result(*payload)
                 elif kind == "done":
@@ -2322,6 +2772,7 @@ class App(ctk.CTk):
         self.crumbs.pack(fill="x", padx=14, pady=(12, 0))
         self.sun = Sunburst(mcard, on_hover=self._map_hover, on_navigate=self._map_nav, on_context=self._map_menu,
                             on_file=self.preview, on_drag=self._sun_drag)
+        self.sun.on_scan_text = lambda t: self.map_hover.configure(text=t, text_color=C["muted"])
         self.sun.pack(fill="both", expand=True, padx=10, pady=10)
         self.map_hover = ctk.CTkLabel(mcard, text="Clic en un anillo para entrar · clic en el centro para subir · "
                                                   "arrastra al Colector", font=F(12), text_color=C["faint"],
@@ -2338,9 +2789,7 @@ class App(ctk.CTk):
         self.map_list = Table(side, [("name", "NOMBRE", 200, "w"), ("pct", "%", 64, "e"),
                                      ("size", "TAMAÑO", 96, "e")],
                               height=14, on_open=self._map_open_row, icons=True,
-                              empty=("map", "Todavía no hay mapa",
-                                     "Analiza un disco o una carpeta para ver de un vistazo qué ocupa tu espacio.",
-                                     ("Analizar ahora", lambda: self.start_scan(self.scan_path.get()))))
+                              empty=self._map_empty())
         self.map_list.pack(fill="both", expand=True)
         ml = self.map_list
         self.map_list.context_menu([mi("Entrar / abrir", lambda: self._map_open_row(ml.focused()), "enter", "Doble clic"),
@@ -2364,6 +2813,11 @@ class App(ctk.CTk):
             ).pack(side="left", padx=8)
         btn(acts, "Exportar CSV", self._export_csv, "ghost", width=110).pack(side="right")
 
+    def _map_empty(self):
+        return ("map", "Todavía no hay mapa",
+                "Analiza un disco o una carpeta para ver de un vistazo qué ocupa tu espacio.",
+                ("Analizar ahora", lambda: self.start_scan(self.scan_path.get())))
+
     def _pick_folder(self):
         d = filedialog.askdirectory(initialdir=self.scan_path.get() or core.HOME)
         if d:
@@ -2383,16 +2837,21 @@ class App(ctk.CTk):
         self.scan_path.delete(0, "end")
         self.scan_path.insert(0, path)
         self.show("analyzer")
-        self.sun.start_scanning("Preparando…")
+        self.map_list.clear()
+        self.map_list.set_empty("search", "Analizando…",
+                                "El contenido aparecerá aquí, ordenado por tamaño, en cuanto termine el análisis.")
+        self.sun.start_scanning(path)
 
         def work(report):
             def prog(n, b, p):
-                self.q.put(("scan", f"{n:,} archivos · {human(b)}".replace(",", ".")))
-                report(f"Analizando · {n:,} archivos · {human(b)} · {p}")
+                self.q.put(("scan", (n, b, p)))
+                report(f"Analizando · {n:,} archivos".replace(",", ".") + f" · {human(b)} · {p}")
             return core.scan_tree(path, self.cancel, prog)
 
         def done(res: core.ScanResult | None):
             self.sun.stop_scanning()
+            self._map_hover(None)
+            self.map_list.set_empty(*self._map_empty())
             if res is None:
                 self.sun.redraw()
                 return
@@ -2415,6 +2874,9 @@ class App(ctk.CTk):
                 txt += f"  ·  {human(hidden)} ocultos"
             self.scan_info.configure(text=txt + (" (parcial)" if self.cancel.is_set() else ""))
         self.run_task(f"Analizando {path}…", work, done, on_error=lambda: (self.sun.stop_scanning(),
+                                                                            self._map_hover(None),
+                                                                            self.map_list.set_empty(
+                                                                                *self._map_empty()),
                                                                             self.sun.redraw()))
 
     def _map_nav(self, node):

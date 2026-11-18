@@ -15,6 +15,7 @@ import string
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Callable, Iterable
 
@@ -1027,6 +1028,7 @@ def scan_tree(root_path: str, cancel: threading.Event | None = None,
     count = 0
     total_bytes = 0
     seen_links: set[tuple[int, int]] = set()  # enlaces duros: solo cuentan una vez
+    last_progress = 0.0
     # recorrido iterativo en pre-orden; luego se suman tamaños en post-orden
     order: list[Node] = []
     stack = [root]
@@ -1084,8 +1086,11 @@ def scan_tree(root_path: str, cancel: threading.Event | None = None,
                 f = Node(name, path, True)
                 f.size, f.files = s, 1
                 node.top_files.append(f)
-        if progress and len(order) % 200 == 0:
-            progress(count, total_bytes, node.path)
+        if progress and len(order) % 16 == 0:
+            now = time.monotonic()
+            if now - last_progress >= 0.08:  # ~12 avisos por segundo: el mapa en vivo crece con fluidez
+                last_progress = now
+                progress(count, total_bytes, node.path)
     for node in reversed(order):
         node.size = node.own_files + sum(c.size for c in node.children)
         node.files += sum(c.files for c in node.children)
