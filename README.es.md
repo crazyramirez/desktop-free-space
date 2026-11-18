@@ -82,7 +82,12 @@ Calcula cuánto ocupa cada categoría y la marca como **Seguro** (se regenera so
 - Unos segundos después de abrirse, la app mira en segundo plano si hay una versión nueva en las [releases de GitHub](https://github.com/crazyramirez/desktop-free-space/releases). Si no hay conexión, no dice nada.
 - Si la hay, aparece un aviso arriba con **Actualizar ahora**, **Ver novedades** y **Omitir esta versión**. Nunca se actualiza sola: siempre tienes que pulsar tú.
 - La descarga se comprueba con su huella **SHA-256** publicada en GitHub; si no coincide, no se instala.
-- Al terminar, **Reiniciar para terminar** cierra la app, cambia el ejecutable (en Windows se guarda una copia `.old`) y la vuelve a abrir. En macOS se copia la nueva `.app` encima de la actual (si no hay permisos, se abre el `.dmg` para que la arrastres a Aplicaciones); en Linux se sustituye el binario.
+- **Reiniciar para terminar** instala la versión nueva del mismo modo en que instalaste la app y la vuelve a abrir:
+  - **Windows con instalador:** se ejecuta el nuevo `Setup.exe` en silencio sobre la instalación actual.
+  - **Windows portátil:** se cambia el `.exe` en su sitio (se guarda una copia `.old`).
+  - **macOS:** se copia la nueva `.app` encima de la actual (si no hay permisos, se abre el `.dmg` para que la arrastres a Aplicaciones).
+  - **Linux con .deb:** el paquete nuevo se abre en el instalador de aplicaciones del sistema; pulsa *Instalar/Actualizar*.
+  - **Linux con .tar.gz:** se sustituye el binario.
 - **Buscar actualizaciones**, en la tarjeta del sistema de la barra lateral, lo comprueba cuando quieras.
 - La opción de omitir una versión se guarda en `settings.json`, en `%APPDATA%\DesktopFreeSpace` (Windows), `~/Library/Application Support/DesktopFreeSpace` (macOS) o `~/.config/DesktopFreeSpace` (Linux).
 
@@ -107,11 +112,13 @@ Desktop Free Space está pensado para que no puedas romper el sistema por accide
 
 Descarga la última versión desde [**Releases**](../../releases/latest):
 
-| Sistema | Archivo | Cómo abrirlo |
+| Sistema | Archivo | Cómo instalarlo |
 |---|---|---|
-| Windows | `DesktopFreeSpace-Windows.exe` | Doble clic. No hay que instalar nada. |
-| macOS | `DesktopFreeSpace-macOS.dmg` | Abre el .dmg y arrastra la app a Aplicaciones. |
-| Linux | `DesktopFreeSpace-Linux-x86_64.tar.gz` | `tar xzf DesktopFreeSpace-Linux-x86_64.tar.gz && ./DesktopFreeSpace/DesktopFreeSpace` |
+| **Windows** (recomendado) | `DesktopFreeSpace-Setup.exe` | Ejecuta el instalador. Se instala solo para tu usuario (sin pedir administrador) en `%LOCALAPPDATA%\Programs\Desktop Free Space`, crea un acceso en el menú Inicio (y en el escritorio si quieres) y aparece en *Configuración → Aplicaciones* para desinstalarla como cualquier programa. |
+| Windows (portátil) | `DesktopFreeSpace-Windows.exe` | Sin instalar: doble clic para abrirla. Útil para llevarla en un USB. |
+| **macOS** | `DesktopFreeSpace-macOS.dmg` | Abre el .dmg y arrastra la app a Aplicaciones. Para desinstalarla, muévela a la Papelera. |
+| **Linux** (Ubuntu/Debian, recomendado) | `DesktopFreeSpace-Linux-amd64.deb` | Doble clic o `sudo apt install ./DesktopFreeSpace-Linux-amd64.deb`. Aparece en el menú de aplicaciones y como comando `desktop-free-space`. Se desinstala con `sudo apt remove desktop-free-space`. |
+| Linux (cualquier distribución) | `DesktopFreeSpace-Linux-x86_64.tar.gz` | `tar xzf DesktopFreeSpace-Linux-x86_64.tar.gz && ./DesktopFreeSpace/DesktopFreeSpace` |
 
 > **Aviso.** Los ejecutables no están firmados. En Windows, SmartScreen puede avisarte: pulsa *Más información* y *Ejecutar de todas formas*. En macOS, la primera vez haz clic derecho en la app y elige *Abrir*.
 
@@ -135,9 +142,10 @@ python app/main.py
 ### Generar el ejecutable
 
 - **Windows:** doble clic en **`build.bat`** → `dist\DesktopFreeSpace.exe`.
+- **Instalador de Windows:** con [Inno Setup 6](https://jrsoftware.org/isinfo.php), genera la versión `--onedir` y ejecuta `iscc /DMyAppVersion=X.Y.Z /DSourceDir=..\dist\DesktopFreeSpace installer\DesktopFreeSpace.iss` → `out\DesktopFreeSpace-Setup.exe`.
 - **macOS / Linux:** `./build.sh` → `dist/DesktopFreeSpace.app` o `dist/DesktopFreeSpace`.
 
-**GitHub Actions** (`.github/workflows/build.yml`) compila las tres versiones en cada push a `main` y publica una **Release** `v<versión>` con los tres archivos. Solo se conserva la última release: las anteriores, sus etiquetas, las ejecuciones antiguas de Actions y los artifacts se borran automáticamente.
+**GitHub Actions** (`.github/workflows/build.yml`) compila todo en cada push a `main` y publica una **Release** `v<versión>` con el instalador y el portátil de Windows, el .dmg de macOS y el .deb y el .tar.gz de Linux. Solo se conserva la última release: las anteriores, sus etiquetas, las ejecuciones antiguas de Actions y los artifacts se borran automáticamente.
 
 ---
 
@@ -160,6 +168,7 @@ desktop-free-space/
 │   └── main.py        # Interfaz gráfica (customtkinter + mapa de anillos en tk.Canvas)
 ├── assets/            # Iconos (icon.ico, icon.png)
 ├── docs/              # Portada (hero.png) e imagen para redes (social-preview.jpg)
+├── installer/         # Script del instalador de Windows (Inno Setup)
 ├── build.bat          # Genera el .exe (Windows)
 ├── build.sh           # Genera la app (macOS) o el binario (Linux)
 ├── requirements.txt

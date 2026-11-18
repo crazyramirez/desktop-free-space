@@ -1553,8 +1553,22 @@ def run_uninstaller(cmd: str) -> None:
 # Ajustes y actualizaciones automáticas (releases de GitHub)
 # --------------------------------------------------------------------------
 UPDATE_REPO = "crazyramirez/desktop-free-space"
-UPDATE_ASSETS = {"win": "DesktopFreeSpace-Windows.exe", "mac": "DesktopFreeSpace-macOS.dmg",
-                 "linux": "DesktopFreeSpace-Linux-x86_64.tar.gz"}
+UPDATE_ASSETS = {"win": "DesktopFreeSpace-Windows.exe", "win-installer": "DesktopFreeSpace-Setup.exe",
+                 "mac": "DesktopFreeSpace-macOS.dmg", "linux": "DesktopFreeSpace-Linux-x86_64.tar.gz",
+                 "linux-deb": "DesktopFreeSpace-Linux-amd64.deb"}
+
+
+def install_kind(exe: str | None = None) -> str:
+    """Cómo está instalada la app: clave de UPDATE_ASSETS que le corresponde."""
+    exe = os.path.abspath(exe or sys.executable)
+    if IS_WIN:
+        # El instalador (Inno Setup) deja unins000.exe junto al programa
+        return "win-installer" if os.path.exists(os.path.join(os.path.dirname(exe), "unins000.exe")) else "win"
+    if IS_MAC:
+        return "mac"
+    if exe.startswith("/opt/desktop-free-space/") or not os.access(os.path.dirname(exe), os.W_OK):
+        return "linux-deb"
+    return "linux"
 
 
 def config_dir() -> str:
@@ -1649,7 +1663,7 @@ def latest_release(timeout: float = 8.0) -> UpdateInfo | None:
         if not re.match(r"^[vV]?\d+\.\d+\.\d+", tag):
             return None
         info = UpdateInfo(tag.lstrip("vV"), str(data.get("body") or ""), str(data.get("html_url") or ""))
-        want = UPDATE_ASSETS["win" if IS_WIN else "mac" if IS_MAC else "linux"]
+        want = UPDATE_ASSETS[install_kind()]
         for a in data.get("assets") or []:
             if a.get("name") == want:
                 info.asset_name = want
@@ -1751,6 +1765,30 @@ def apply_update(path: str, exe: str | None = None, pid: int | None = None) -> s
     """Instala la descarga. Devuelve 'restart' (cerrar la app para terminar) u 'opened' (se abrió el instalador
     para que lo termine el usuario). Lanza excepción si no se puede."""
     exe = os.path.abspath(exe or sys.executable)
+    if IS_WIN and path.lower().endswith("-setup.exe"):
+        # Versión instalada: el instalador en modo silencioso sustituye la instalación y reabre la app
+        import tempfile
+        pid = pid or os.getpid()
+        script = os.path.join(tempfile.gettempdir(), f"dfs-update-{pid}.cmd")
+        with open(script, "w", encoding="mbcs", errors="replace") as fh:
+            fh.write("\r\n".join([
+                "@echo off",
+                f'set "PID={pid}"',
+                ":wait",
+                'tasklist /FI "PID eq %PID%" 2>nul | find "%PID%" >nul',
+                "if not errorlevel 1 (ping -n 2 127.0.0.1 >nul & goto wait)",
+                f'"{path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /RELAUNCH',
+                '(goto) 2>nul & del "%~f0"',
+            ]) + "\r\n")
+        flags = 0x08000000 | 0x00000008 | 0x00000200  # NO_WINDOW | DETACHED | NEW_PROCESS_GROUP
+        subprocess.Popen(["cmd", "/c", script], creationflags=flags, close_fds=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return "restart"
+    if IS_LINUX and path.endswith(".deb"):
+        # Instalada con el .deb (en /opt, sin permisos de escritura): lo abre el instalador de paquetes del sistema
+        subprocess.Popen(["xdg-open", path], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        return "opened"
     if IS_WIN:
         import tempfile
         pid = pid or os.getpid()

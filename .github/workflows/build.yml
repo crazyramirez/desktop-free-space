@@ -47,6 +47,17 @@ jobs:
             --collect-data customtkinter app\main.py
           New-Item -ItemType Directory -Force out | Out-Null
           Copy-Item dist\DesktopFreeSpace.exe out\DesktopFreeSpace-Windows.exe
+          # Versión instalable: --onedir (arranca más rápido, no descomprime nada al abrir)
+          pyinstaller --noconfirm --clean --onedir --windowed --name DesktopFreeSpace `
+            --distpath dist-installer --workpath build-installer `
+            --icon assets\icon.ico --add-data "assets\icon.ico;." --add-data "assets\icon.png;." `
+            --collect-data customtkinter app\main.py
+          $ver = (Select-String -Path app\main.py -Pattern '^VERSION\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          & $iscc /Qp "/DMyAppVersion=$ver" "/DSourceDir=..\dist-installer\DesktopFreeSpace" installer\DesktopFreeSpace.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup ha fallado" }
+          Get-ChildItem out
 
       - name: Build (macOS)
         if: matrix.name == 'macos'
@@ -70,6 +81,27 @@ jobs:
           cp assets/icon.png pkg/DesktopFreeSpace/desktopfreespace.png
           chmod +x pkg/DesktopFreeSpace/DesktopFreeSpace
           tar -C pkg -czf out/DesktopFreeSpace-Linux-x86_64.tar.gz DesktopFreeSpace
+          # Paquete .deb: /opt/desktop-free-space, comando desktop-free-space y entrada en el menú
+          VER=$(python3 -c "import re;print(re.search(r'^VERSION\s*=\s*\"([^\"]+)\"', open('app/main.py',encoding='utf-8').read(), re.M).group(1))")
+          D=deb/desktop-free-space
+          mkdir -p $D/DEBIAN $D/opt/desktop-free-space $D/usr/bin $D/usr/share/applications $D/usr/share/icons/hicolor/256x256/apps
+          cp dist/DesktopFreeSpace $D/opt/desktop-free-space/DesktopFreeSpace
+          chmod 755 $D/opt/desktop-free-space/DesktopFreeSpace
+          ln -s /opt/desktop-free-space/DesktopFreeSpace $D/usr/bin/desktop-free-space
+          python3 -c "from PIL import Image; Image.open('assets/icon.png').convert('RGBA').resize((256,256)).save('$D/usr/share/icons/hicolor/256x256/apps/desktop-free-space.png')"
+          printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=Desktop Free Space' \
+            'Comment=Disk space analyzer and cleaner' 'Comment[es]=Analiza y libera espacio en disco' \
+            'Exec=/opt/desktop-free-space/DesktopFreeSpace' 'Icon=desktop-free-space' 'Terminal=false' \
+            'Categories=Utility;System;Filesystem;' 'Keywords=disk;space;clean;cache;' \
+            > $D/usr/share/applications/desktop-free-space.desktop
+          printf '%s\n' 'Package: desktop-free-space' "Version: $VER" 'Section: utils' 'Priority: optional' \
+            'Architecture: amd64' 'Maintainer: crazyramirez <noreply@github.com>' \
+            'Homepage: https://github.com/crazyramirez/desktop-free-space' \
+            'Description: Disk space analyzer and cleaner' \
+            ' Interactive disk map, temp/cache/AI model cleanup, duplicates and leftovers finder.' \
+            > $D/DEBIAN/control
+          dpkg-deb --build --root-owner-group $D out/DesktopFreeSpace-Linux-amd64.deb
+          ls -la out
 
       - uses: actions/upload-artifact@v4
         with:
@@ -100,10 +132,10 @@ jobs:
       - name: Replace releases (keep only the latest)
         run: |
           TAG=${{ steps.ver.outputs.tag }}
-          for f in DesktopFreeSpace-Windows.exe DesktopFreeSpace-Linux-x86_64.tar.gz; do
+          for f in DesktopFreeSpace-Windows.exe DesktopFreeSpace-Setup.exe DesktopFreeSpace-Linux-x86_64.tar.gz DesktopFreeSpace-Linux-amd64.deb; do
             [ -f "assets-out/$f" ] || { echo "::error::Falta $f: no se publica"; exit 1; }
           done
-          NOTES="Windows (.exe), macOS (.dmg) y Linux (.tar.gz). Commit ${GITHUB_SHA::7}."
+          NOTES="Windows: instalador (DesktopFreeSpace-Setup.exe) o portátil (.exe). macOS: .dmg. Linux: .deb o .tar.gz. Commit ${GITHUB_SHA::7}."
           if [ -f assets-out/DesktopFreeSpace-macOS.dmg ]; then
             # Completa: se borran todas las releases y etiquetas anteriores
             for t in $(gh release list -R "$REPO" --limit 200 --json tagName -q '.[].tagName'); do
@@ -118,7 +150,7 @@ jobs:
             echo "::warning::No hay build de macOS; se mantiene la release anterior para el .dmg"
             gh release delete "$TAG" -R "$REPO" --yes --cleanup-tag || true
             gh api -X DELETE "repos/$REPO/git/refs/tags/$TAG" || true
-            NOTES="Windows (.exe) y Linux (.tar.gz). La versión de macOS llegará en cuanto GitHub tenga equipos Mac libres; mientras, el .dmg anterior sigue en la release previa. Commit ${GITHUB_SHA::7}."
+            NOTES="Windows (instalador y portátil) y Linux (.deb y .tar.gz). La versión de macOS llegará en cuanto GitHub tenga equipos Mac libres; mientras, el .dmg anterior sigue en la release previa. Commit ${GITHUB_SHA::7}."
           fi
           gh release create "$TAG" -R "$REPO" --target "$GITHUB_SHA" --title "Desktop Free Space $TAG" \
             --notes "$NOTES" --latest assets-out/*

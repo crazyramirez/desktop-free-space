@@ -84,7 +84,12 @@ Calculates the size of each category and labels it **Safe** (regenerates by itse
 - A few seconds after starting, the app checks in the background for a new version in the [GitHub releases](https://github.com/crazyramirez/desktop-free-space/releases). Offline, it stays quiet.
 - If there is one, a banner offers **Update now**, **What's new** and **Skip this version**. It never updates on its own: you always have to click.
 - The download is verified against the **SHA-256** published on GitHub; if it doesn't match, nothing is installed.
-- **Restart to finish** closes the app, swaps the executable (on Windows a `.old` backup is kept) and reopens it. On macOS the new `.app` is copied over the current one (without permission, the `.dmg` opens so you can drag it to Applications); on Linux the binary is replaced.
+- **Restart to finish** installs the new version the same way you installed the app, and reopens it:
+  - **Windows installer:** the new `Setup.exe` runs silently over the current installation.
+  - **Windows portable:** the `.exe` is swapped in place (a `.old` backup is kept).
+  - **macOS:** the new `.app` is copied over the current one (without permission, the `.dmg` opens so you can drag it to Applications).
+  - **Linux .deb:** the new package opens in your system's software installer; click *Install/Update*.
+  - **Linux .tar.gz:** the binary is replaced.
 - **Check for updates**, in the system card of the sidebar, checks whenever you want.
 - The skipped version is stored in `settings.json` in `%APPDATA%\DesktopFreeSpace` (Windows), `~/Library/Application Support/DesktopFreeSpace` (macOS) or `~/.config/DesktopFreeSpace` (Linux).
 
@@ -109,11 +114,13 @@ Desktop Free Space is designed so you can't break your system by accident:
 
 Get the latest version from [**Releases**](../../releases/latest):
 
-| System | File | How to open |
+| System | File | How to install |
 |---|---|---|
-| Windows | `DesktopFreeSpace-Windows.exe` | Double-click. Nothing to install. |
-| macOS | `DesktopFreeSpace-macOS.dmg` | Open the .dmg and drag the app to Applications. |
-| Linux | `DesktopFreeSpace-Linux-x86_64.tar.gz` | `tar xzf DesktopFreeSpace-Linux-x86_64.tar.gz && ./DesktopFreeSpace/DesktopFreeSpace` |
+| **Windows** (recommended) | `DesktopFreeSpace-Setup.exe` | Run the installer. It installs for your user only (no admin rights) in `%LOCALAPPDATA%\Programs\Desktop Free Space`, adds a Start menu shortcut (and a desktop one if you want) and shows up in *Settings → Apps* so you can uninstall it like any other program. |
+| Windows (portable) | `DesktopFreeSpace-Windows.exe` | No installation: double-click to run. Handy on a USB stick. |
+| **macOS** | `DesktopFreeSpace-macOS.dmg` | Open the .dmg and drag the app to Applications. To uninstall, move it to the Trash. |
+| **Linux** (Ubuntu/Debian, recommended) | `DesktopFreeSpace-Linux-amd64.deb` | Double-click it or run `sudo apt install ./DesktopFreeSpace-Linux-amd64.deb`. It appears in the app menu and as the `desktop-free-space` command. Uninstall with `sudo apt remove desktop-free-space`. |
+| Linux (any distro) | `DesktopFreeSpace-Linux-x86_64.tar.gz` | `tar xzf DesktopFreeSpace-Linux-x86_64.tar.gz && ./DesktopFreeSpace/DesktopFreeSpace` |
 
 > **Note.** The executables are not signed. On Windows, SmartScreen may warn you: click *More info* and *Run anyway*. On macOS, the first time right-click the app and choose *Open*.
 
@@ -137,9 +144,10 @@ python app/main.py
 ### Build the executable
 
 - **Windows:** double-click **`build.bat`** → `dist\DesktopFreeSpace.exe`.
+- **Windows installer:** with [Inno Setup 6](https://jrsoftware.org/isinfo.php), build the `--onedir` version and run `iscc /DMyAppVersion=X.Y.Z /DSourceDir=..\dist\DesktopFreeSpace installer\DesktopFreeSpace.iss` → `out\DesktopFreeSpace-Setup.exe`.
 - **macOS / Linux:** `./build.sh` → `dist/DesktopFreeSpace.app` or `dist/DesktopFreeSpace`.
 
-**GitHub Actions** (`.github/workflows/build.yml`) builds all three versions on every push to `main` and publishes a **Release** `v<version>` with the three files. Only the latest release is kept: older releases, their tags, old Actions runs and artifacts are deleted automatically.
+**GitHub Actions** (`.github/workflows/build.yml`) builds everything on every push to `main` and publishes a **Release** `v<version>` with the Windows installer and portable exe, the macOS .dmg, and the Linux .deb and .tar.gz. Only the latest release is kept: older releases, their tags, old Actions runs and artifacts are deleted automatically.
 
 ---
 
@@ -162,6 +170,7 @@ desktop-free-space/
 │   └── main.py        # GUI (customtkinter + sunburst map)
 ├── assets/            # Icons (icon.ico, icon.png)
 ├── docs/              # Cover (hero.png) and social preview image (social-preview.jpg)
+├── installer/         # Windows installer script (Inno Setup)
 ├── build.bat          # Builds the .exe (Windows)
 ├── build.sh           # Builds the app (macOS) or binary (Linux)
 ├── requirements.txt

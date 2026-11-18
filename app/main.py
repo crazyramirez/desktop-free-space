@@ -19,7 +19,7 @@ import core  # noqa: E402
 from core import human  # noqa: E402
 
 APP_NAME = "Desktop Free Space"
-VERSION = "2.4.0"
+VERSION = "2.5.0"
 
 # ---------------------------------------------------------------------------
 # Sistema visual
@@ -2659,8 +2659,13 @@ class UpdateDialog(Dialog):
     def _finish(self, how):
         if how == "opened":
             self.destroy()
-            self.app.alert("He abierto el instalador de la versión nueva. Arrastra la app a Aplicaciones para "
-                           "terminar y vuelve a abrirla.", "Termina la instalación")
+            if core.IS_LINUX:
+                text = ("He abierto el paquete de la versión nueva en el instalador de tu sistema. Pulsa "
+                        "«Instalar» (o «Actualizar») y vuelve a abrir la app.")
+            else:
+                text = ("He abierto el instalador de la versión nueva. Arrastra la app a Aplicaciones para "
+                        "terminar y vuelve a abrirla.")
+            self.app.alert(text, "Termina la instalación")
             return
         if not core.IS_WIN:
             core.relaunch_after_update()
