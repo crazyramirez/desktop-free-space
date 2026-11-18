@@ -4,6 +4,7 @@ No depende de la interfaz gráfica, así que se puede probar por separado.
 """
 from __future__ import annotations
 
+import gc
 import glob
 import heapq
 import json
@@ -1018,6 +1019,18 @@ SKIP_ROOT_DIRS = {"/proc", "/sys", "/dev", "/run", "/System/Volumes", "/Volumes"
 def scan_tree(root_path: str, cancel: threading.Event | None = None,
               progress: Callable[[int, int, str], None] | None = None,
               top_n: int = 1000) -> ScanResult:
+    # El árbol no tiene ciclos (se libera solo), pero crea millones de objetos: con el recolector de Python
+    # activo saltan recolecciones completas que congelan todos los hilos cientos de ms (y frenan el análisis).
+    gc_was = gc.isenabled()
+    gc.disable()
+    try:
+        return _scan_tree(root_path, cancel, progress, top_n)
+    finally:
+        if gc_was:
+            gc.enable()
+
+
+def _scan_tree(root_path: str, cancel: threading.Event | None, progress, top_n: int) -> ScanResult:
     root = Node(root_path, root_path)
     big: list[tuple[int, str]] = []  # min-heap
     exts: dict[str, list[int]] = {}

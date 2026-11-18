@@ -21,7 +21,7 @@ import core  # noqa: E402
 from core import human  # noqa: E402
 
 APP_NAME = "Desktop Free Space"
-VERSION = "2.7.0"
+VERSION = "2.7.1"
 
 # ---------------------------------------------------------------------------
 # Sistema visual
@@ -1195,55 +1195,69 @@ def _ease_in_cubic(t):
     return t * t * t
 
 
-class ScanFX:
-    """Animación del visor mientras se analiza. Lo caro (anillos con suavizado) se dibuja ~10 veces por
-    segundo y solo en la zona central; lo que se mueve (cometas, órbitas, partículas, contadores) son
-    imágenes ya preparadas que solo cambian de sitio, para no frenar el análisis."""
+class _RingWorker(threading.Thread):
+    """Hilo que lleva el árbol vivo de carpetas y dibuja los anillos con suavizado (Pillow, sin tkinter).
+    Así el dibujo caro nunca bloquea los fotogramas de la interfaz."""
 
-    FPS_MS = 30
-    RING_MS = 100
+    FPS = 15
 
-    def __init__(self, canvas):
-        self.cv = canvas
-        self.job = None
-        self.items: dict = {}
-        self.size = None
-
-    # -- ciclo de vida --
-    def start(self, root_path):
-        self.stop()
-        now = time.perf_counter()
-        self.root = root_path
-        self.tree = [0, 1.0, {}]      # [bytes, fracción mostrada de su padre, {nombre: nodo}] (3 niveles)
-        self.n = self.b = 0
-        self.shown_n = self.shown_b = 0.0
+    def __init__(self, root):
+        super().__init__(daemon=True)
+        self.root = root
+        self.q: queue.SimpleQueue = queue.SimpleQueue()
+        self.tree = [0, 0.0, {}]      # [bytes, fracción mostrada de su padre, {nombre: nodo}] (3 niveles)
         self.active: list[str] = []
-        self.last_text = 0.0
-        self.path = ""
-        self.t0 = now
-        self.last_ring = 0.0
+        self.b = 0
+        self.geo = None
+        self.bg = None                # recorte del fondo (RGB) donde van los anillos: la imagen sale opaca
+        self.t0 = time.perf_counter()
+        self.lock = threading.Lock()
+        self.out = None
+        self.paused = False
         self.dirty = True
-        self.rate_hist = [(now, 0)]
-        self.particles: list[dict] = []
-        self.spawn_acc = 0.0
-        self.last_t = now
-        self.size = None
-        self._tick()
+        self.stop_ev = threading.Event()
 
     def stop(self):
-        if self.job is not None:
-            self.cv.after_cancel(self.job)
-            self.job = None
-        self.items = {}
-        self.size = None
+        self.stop_ev.set()
+        self.q.put(("stop", None))
 
-    @property
-    def running(self):
-        return self.job is not None
+    def run(self):
+        period = 1 / self.FPS
+        next_t = time.perf_counter()
+        while not self.stop_ev.is_set():
+            try:
+                while True:
+                    kind, arg = self.q.get(timeout=max(0.0, next_t - time.perf_counter()))
+                    if kind == "p":
+                        self._progress(*arg)
+                    elif kind == "geo":
+                        self.geo, self.bg = arg
+                        self.dirty = True
+                    elif kind == "stop":
+                        return
+            except queue.Empty:
+                pass
+            next_t = time.perf_counter() + period
+            intro = min(1.0, (time.perf_counter() - self.t0) / 0.8)
+            if self.paused or self.geo is None or not (self.dirty or intro < 1):
+                continue
+            try:
+                img = self._render(intro)
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
+                img = None
+            if img is not None:
+                with self.lock:
+                    self.out = img
 
-    def progress(self, n, b, p):
+    def take(self):
+        with self.lock:
+            img, self.out = self.out, None
+        return img
+
+    def _progress(self, b, p):
         delta = max(0, b - self.b)
-        self.n, self.b, self.path = n, b, p or self.path
+        self.b = b
         try:
             rel = os.path.relpath(p, self.root) if p else "."
         except ValueError:
@@ -1257,11 +1271,143 @@ class ScanFX:
             node = node[2].setdefault(part, [0, 0.0, {}])
             node[0] += delta
         self.active = parts[:3]
+        self.dirty = True
+
+    def _base(self):
+        """Nivel que se muestra: si una carpeta lo ocupa casi todo (el análisis va por ella), se baja un
+        nivel para que los anillos enseñen variedad; se vuelve arriba en cuanto aparecen hermanas."""
+        path, node = [], self.tree
+        while len(path) < 2:
+            kids = [(k, v) for k, v in node[2].items() if v[0] > 0]
+            if len(kids) == 1 and kids[0][1][0] >= node[0] * 0.97 and kids[0][1][2]:
+                path.append(kids[0][0])
+                node = kids[0][1]
+            else:
+                break
+        return path, node
+
+    def _render(self, intro):
+        rad, k, side = self.geo
+        ss = 2
+        im = Image.new("RGBA", (side * ss, side * ss), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        X = Y = side * ss / 2
+        path, base = self._base()
+        settled = True
+        if base[0] > 0:
+            act = self.active[len(path):] if self.active[:len(path)] == path else []
+            grow = 0.75 + 0.25 * _ease_out_back(intro)
+
+            def ring(node, depth, a0, span, active):
+                nonlocal settled
+                a = a0
+                for name, v in list(node[2].items()):
+                    if v[0] <= 0:
+                        continue
+                    frac = v[0] / node[0] if node[0] else 0  # la fracción mostrada se acerca a la real
+                    v[1] += (frac - v[1]) * 0.22
+                    settled &= abs(frac - v[1]) < 0.002
+                    sp = span * v[1]
+                    if sp >= (0.3 if depth == 1 else 0.6):
+                        on = bool(active) and name == active[0]
+                        r1 = (rad[depth - 1] + 1.4) * grow
+                        r2 = (rad[depth] - 1.4) * grow + ((4 + depth) * k if on else 0)
+                        col = seg_color(a + sp / 2, depth)
+                        pts = _arc_pts(X, Y, r2 * ss, a, a + sp) + \
+                            list(reversed(_arc_pts(X, Y, r1 * ss, a, a + sp)))
+                        d.polygon(pts, fill=_mix(col, "#ffffff", 0.18) if on else col, outline=C["surface"],
+                                  width=ss)
+                        if depth == 1 and v[2]:
+                            ring(v, 2, a, sp, active[1:] if on else [])
+                    a += sp
+            ring(base, 1, 0.0, 360.0 * min(1.0, intro * 1.15), act)
+        self.dirty = not settled
+        layer = im.resize((side, side), Image.LANCZOS)
+        out = self.bg.copy().convert("RGBA")
+        out.alpha_composite(layer)
+        return out.convert("RGB")
+
+
+class ScanFX:
+    """Animación del visor mientras se analiza.
+    - Los anillos (caros) los dibuja otro hilo y llegan ya listos: la interfaz nunca se bloquea.
+    - Lo que se mueve (cometas, órbitas, partículas, contadores) son imágenes ya preparadas que solo
+      cambian de sitio, a 60 fps con ritmo fijo y temporizador de 1 ms (Windows); si el equipo no llega,
+      baja sola a 45 o 30 fps.
+    - Se pausa si el Mapa no se ve (otra página o ventana minimizada)."""
+
+    FPS_LEVELS = (60, 45, 30)
+
+    def __init__(self, canvas):
+        self.cv = canvas
+        self.job = None
+        self.items: dict = {}
+        self.size = None
+        self.worker = None
+        self._timer_1ms = False
+
+    # -- ciclo de vida --
+    def start(self, root_path):
+        self.stop()
+        now = time.perf_counter()
+        self.root = root_path
+        self.n = self.b = 0
+        self.shown_n = self.shown_b = 0.0
+        self.last_text = 0.0
+        self.path = ""
+        self.t0 = now
+        self.rate_hist = [(now, 0)]
+        self.particles: list[dict] = []
+        self.spawn_acc = 0.0
+        self.last_t = None
+        self.size = None
+        self.fps_i = 0
+        self.slow = 0
+        self.next_frame = now
+        self.visible = True
+        self.resize_since = self.resize_size = None
+        self.worker = _RingWorker(root_path)
+        self.worker.start()
+        self._timer(True)
+        self._tick()
+
+    def stop(self):
+        if self.job is not None:
+            self.cv.after_cancel(self.job)
+            self.job = None
+        if self.worker is not None:
+            self.worker.stop()
+            self.worker = None
+        self._timer(False)
+        self.items = {}
+        self.size = None
+
+    def _timer(self, on):
+        """Windows reparte el tiempo en saltos de 15,6 ms: mientras se anima se pide precisión de 1 ms.
+        (Bajar el intervalo de cambio de hilo de Python se probó: frena el análisis a la mitad.)"""
+        if on == self._timer_1ms:
+            return
+        self._timer_1ms = on
+        if not core.IS_WIN:
+            return
+        try:
+            import ctypes
+            (ctypes.windll.winmm.timeBeginPeriod if on else ctypes.windll.winmm.timeEndPeriod)(1)
+        except Exception:  # noqa: BLE001
+            pass
+
+    @property
+    def running(self):
+        return self.job is not None
+
+    def progress(self, n, b, p):
+        self.n, self.b, self.path = n, b, p or self.path
+        if self.worker is not None:
+            self.worker.q.put(("p", (b, p)))
         now = time.perf_counter()
         self.rate_hist.append((now, n))
         while len(self.rate_hist) > 2 and now - self.rate_hist[0][0] > 2.5:
             self.rate_hist.pop(0)
-        self.dirty = True
 
     # -- recursos que dependen del tamaño --
     def _build(self):
@@ -1277,15 +1423,22 @@ class ScanFX:
         self.r_orbit = (rad[3] + rad[4]) / 2
         self.r_comet2 = rad[5] - 5 * k
         self.r_spawn = rad[5] + 8 * k
-        self.bg_photo = ImageTk.PhotoImage(self._background(w, h, cx, cy, rad))
+        bg = self._background(w, h, cx, cy, rad)
+        self.bg_photo = ImageTk.PhotoImage(bg)
         I = self.items
         I["bg"] = cv.create_image(0, 0, anchor="nw", image=self.bg_photo)
-        I["rings"] = cv.create_image(cx, cy, anchor="center")
+        # zona de los anillos: el hilo de dibujo recibe su trozo de fondo y devuelve una imagen opaca
+        side = int(2 * (rad[2] + 8 * k)) + 4
+        x0, y0 = int(round(cx - side / 2)), int(round(cy - side / 2))
+        I["rings"] = cv.create_image(x0, y0, anchor="nw")
+        if self.worker is not None:
+            self.worker.q.put(("geo", ((rad, k, side), bg.crop((x0, y0, x0 + side, y0 + side)))))
         # partículas (debajo del núcleo: el centro las «absorbe»)
         self.pal = ["#4f8bff", "#38d0c4", "#5ee08a", "#ffd23f", "#ff9f43", "#ff6b8b", "#c56cf0", "#7f7bff"]
         self.p_sprites = {c: [self._glow(c, max(1.5, (5.2 - 0.5 * i) * k), 0.9 - 0.09 * i) for i in range(8)]
                           for c in self.pal}
-        self.p_pool = [cv.create_image(-99, -99) for _ in range(44)]
+        self.p_free = [cv.create_image(-99, -99) for _ in range(36)]
+        self.particles = []
         # cometas
         self.c1_sprites = [self._glow(_mix("#dbe7ff", _mix(C["accent"], C["accent2"], i / 24), min(1, i / 4)),
                                       max(1.5, (8.5 - 0.3 * i) * k), (1 - i / 26) ** 1.6) for i in range(24)]
@@ -1298,7 +1451,7 @@ class ScanFX:
         I["orbs"] = [cv.create_image(cx, cy, image=im) for im in self.orb_imgs]
         # núcleo: onda pulsante, disco y textos
         r0 = rad[0] - 3
-        self.ripples = [self._ripple(r0, i / 24) for i in range(24)]
+        self.ripples = [self._ripple(r0, i / 32) for i in range(32)]
         I["ripple"] = cv.create_image(cx, cy)
         self.core_photo = self._core(r0)
         I["core"] = cv.create_image(cx, cy, image=self.core_photo)
@@ -1306,8 +1459,9 @@ class ScanFX:
                                       font=(UI_FONT, 8, "bold"))
         I["t_big"] = cv.create_text(cx, cy, text="0 B", fill=C["text"], font=(UI_FONT, 19, "bold"))
         I["t_files"] = cv.create_text(cx, cy + 24 * k, text="0 archivos", fill=C["muted"], font=(UI_FONT, 10))
-        self.last_ring = 0.0
-        self.dirty = True
+        self.cache: dict = {}
+        if getattr(self, "rings_photo", None) is not None and self.worker is not None:
+            self.worker.dirty = True
 
     def _background(self, w, h, cx, cy, rad):
         ss = 2
@@ -1430,88 +1584,74 @@ class ScanFX:
         im.alpha_composite(ring)
         return ImageTk.PhotoImage(im.resize((n, n), Image.LANCZOS))
 
-    # -- anillos en vivo --
-    def _base(self):
-        """Nivel que se muestra: si una carpeta lo ocupa casi todo (el análisis va por ella), se baja un
-        nivel para que los anillos enseñen variedad; se vuelve arriba en cuanto aparecen hermanas."""
-        path, node = [], self.tree
-        while len(path) < 2:
-            kids = [(k, v) for k, v in node[2].items() if v[0] > 0]
-            if len(kids) == 1 and kids[0][1][0] >= node[0] * 0.97 and kids[0][1][2]:
-                path.append(kids[0][0])
-                node = kids[0][1]
-            else:
-                break
-        return path, node
-
-    def _render_rings(self, intro):
-        w, h, cx, cy, rad = self.geo
-        ss = 2
-        R = rad[2] + 8 * self.k
-        side = int(2 * R) + 4
-        im = Image.new("RGBA", (side * ss, side * ss), (0, 0, 0, 0))
-        d = ImageDraw.Draw(im)
-        X = Y = side * ss / 2
-        path, base = self._base()
-        if base[0] <= 0:
-            return None
-        act = self.active[len(path):] if self.active[:len(path)] == path else []
-        grow = 0.75 + 0.25 * intro
-        settled = True
-
-        def ring(node, depth, a0, span, active):
-            nonlocal settled
-            a = a0
-            for name, v in node[2].items():
-                if v[0] <= 0:
-                    continue
-                frac = v[0] / node[0] if node[0] else 0  # la fracción mostrada se acerca a la real
-                v[1] += (frac - v[1]) * 0.3
-                settled &= abs(frac - v[1]) < 0.002
-                sp = span * v[1]
-                if sp >= (0.3 if depth == 1 else 0.6):
-                    on = bool(active) and name == active[0]
-                    r1 = (rad[depth - 1] + 1.4) * grow
-                    r2 = (rad[depth] - 1.4) * grow + ((4 + depth) * self.k if on else 0)
-                    col = seg_color(a + sp / 2, depth)
-                    pts = _arc_pts(X, Y, r2 * ss, a, a + sp) + list(reversed(_arc_pts(X, Y, r1 * ss, a, a + sp)))
-                    d.polygon(pts, fill=_mix(col, "#ffffff", 0.18) if on else col, outline=C["surface"], width=ss)
-                    if depth == 1 and v[2]:
-                        ring(v, 2, a, sp, active[1:] if on else [])
-                a += sp
-        ring(base, 1, 0.0, 360.0 * intro, act)
-        self.dirty = not settled
-        return ImageTk.PhotoImage(im.resize((side, side), Image.LANCZOS))
-
     # -- fotograma --
+    def _set(self, item, key, **kw):
+        """itemconfigure solo si cambia: menos repintados de Tk."""
+        val = tuple(kw.values())
+        if self.cache.get(key) != val:
+            self.cache[key] = val
+            self.cv.itemconfigure(item, **kw)
+
     def _tick(self):
         cv = self.cv
+        self.job = None
         try:
             if not cv.winfo_exists():
                 return
-            if (max(cv.winfo_width(), 50), max(cv.winfo_height(), 50)) != self.size:
-                self._build()
+            shown = cv.is_shown() if cv.is_shown else True
+            if not shown:  # en pausa: los datos siguen llegando, pero no se dibuja nada
+                if self.visible:
+                    self.visible = False
+                    if self.worker is not None:
+                        self.worker.paused = True
+                    self._timer(False)
+                self.job = cv.after(200, self._tick)
+                return
+            if not self.visible:
+                self.visible = True
+                self.last_t = None
+                self.next_frame = time.perf_counter()
+                if self.worker is not None:
+                    self.worker.paused = False
+                    self.worker.dirty = True
+                self._timer(True)
             now = time.perf_counter()
-            self.frame_start = now
-            dt = min(0.1, now - self.last_t)
+            cur = (max(cv.winfo_width(), 50), max(cv.winfo_height(), 50))
+            if self.size is None:
+                self._build()
+            elif abs(cur[0] - self.size[0]) > 6 or abs(cur[1] - self.size[1]) > 6:
+                # reconstruir la escena cuesta: se espera a que el tamaño se quede quieto, y se ignoran
+                # los vaivenes de uno o dos píxeles de la maquetación
+                if self.resize_since is None or self.resize_size != cur:
+                    self.resize_since, self.resize_size = now, cur
+                elif now - self.resize_since > 0.15:
+                    self.resize_since = None
+                    self._build()
+            else:
+                self.resize_since = None
+            if self.last_t is not None:  # si no se llega a tiempo de forma sostenida, se bajan los fps
+                late = now - self.last_t > 1.6 / self.FPS_LEVELS[self.fps_i]
+                self.slow = max(0, self.slow + (1 if late else -1))
+                if self.slow > 45 and self.fps_i < len(self.FPS_LEVELS) - 1:
+                    self.fps_i += 1
+                    self.slow = 0
+            dt = min(0.1, now - self.last_t) if self.last_t is not None else 0.0
             self.last_t = now
             t = now - self.t0
             fade = min(1.0, t / 0.5)
             w, h, cx, cy, rad = self.geo
             I = self.items
-            # anillos (caros): ~10 veces por segundo y solo si algo cambió
-            if (self.dirty or t < 1.0) and now - self.last_ring >= self.RING_MS / 1000:
-                self.last_ring = now
-                ph = self._render_rings(min(1.0, t / 0.8))
-                if ph is not None:
-                    self.rings_photo = ph
-                    cv.itemconfigure(I["rings"], image=ph)
+            # anillos: los entrega ya dibujados el otro hilo
+            img = self.worker.take() if self.worker is not None else None
+            if img is not None:
+                self.rings_photo = ImageTk.PhotoImage(img)
+                cv.itemconfigure(I["rings"], image=self.rings_photo)
             # cometas
-            for items, sprites, r, speed, gap in ((I["c1"], self.c1_sprites, self.r_comet1, 150, 3.2),
-                                                  (I["c2"], self.c2_sprites, self.r_comet2, -70, 3.6)):
+            for items, r, speed, gap in ((I["c1"], self.r_comet1, 150, 3.2), (I["c2"], self.r_comet2, -70, 3.6)):
                 head = (t * speed) % 360
+                step = math.copysign(gap, speed)
                 for i, it in enumerate(items):
-                    ang = math.radians(head - math.copysign(gap * i, speed))
+                    ang = math.radians(head - step * i)
                     cv.coords(it, cx + r * math.sin(ang), cy - r * math.cos(ang))
             # iconos en órbita: salen del centro al empezar y flotan
             n = len(I["orbs"])
@@ -1520,51 +1660,55 @@ class ScanFX:
                 bob = math.sin(t * 2.2 + i * 1.3) * 5 * self.k
                 r = rad[0] + (self.r_orbit - rad[0]) * _ease_out_back(max(0.0, (t - i * 0.05) / 0.9)) + bob
                 cv.coords(it, cx + r * math.sin(ang), cy - r * math.cos(ang))
-            # partículas: más cuanto más rápido avanza el análisis
+            # partículas: cada una conserva su elemento del lienzo; más cuanto más rápido va el análisis
             rate = self.rate()
-            self.spawn_acc += dt * (4 + min(14.0, rate / 800)) * fade
-            while self.spawn_acc >= 1 and len(self.particles) < len(self.p_pool):
+            self.spawn_acc = min(3.0, self.spawn_acc + dt * (4 + min(14.0, rate / 800)) * fade)
+            while self.spawn_acc >= 1 and self.p_free:
                 self.spawn_acc -= 1
                 self.particles.append(dict(a=random.uniform(0, 360), t0=now, dur=random.uniform(0.9, 1.7),
                                            col=random.choice(self.pal), swirl=random.uniform(25, 70),
-                                           item=None))
-            self.spawn_acc = min(self.spawn_acc, 3)
-            free = [p for p in self.p_pool]
+                                           item=self.p_free.pop(), step=-1))
             alive = []
+            r_end = rad[0] * 0.85
             for p in self.particles:
                 pt = (now - p["t0"]) / p["dur"]
                 if pt >= 1:
+                    cv.coords(p["item"], -99, -99)
+                    self.p_free.append(p["item"])
                     continue
                 alive.append(p)
-            self.particles = alive
-            for p, it in zip(alive, free):
-                pt = (now - p["t0"]) / p["dur"]
                 e = _ease_in_cubic(pt)
-                r = self.r_spawn + (rad[0] * 0.85 - self.r_spawn) * e
+                r = self.r_spawn + (r_end - self.r_spawn) * e
                 ang = math.radians(p["a"] + p["swirl"] * e)
-                cv.coords(it, cx + r * math.sin(ang), cy - r * math.cos(ang))
-                cv.itemconfigure(it, image=self.p_sprites[p["col"]][min(7, int(pt * 8))])
-            for it in free[len(alive):]:
-                cv.coords(it, -99, -99)
-            # onda del núcleo
-            cv.itemconfigure(I["ripple"], image=self.ripples[int(t * 16) % len(self.ripples)])
-            # contadores que «ruedan» hasta el valor real
-            self.shown_n += (self.n - self.shown_n) * 0.18
-            self.shown_b += (self.b - self.shown_b) * 0.18
-            cv.itemconfigure(I["t_big"], text=human(int(self.shown_b)))
-            cv.itemconfigure(I["t_files"], text=f"{int(round(self.shown_n)):,} archivos".replace(",", "."))
-            pulse = 0.5 + 0.5 * math.sin(t * 3)
-            cv.itemconfigure(I["t_label"], fill=_mix(C["accent"], "#bcd0ff", pulse * 0.6))
+                cv.coords(p["item"], cx + r * math.sin(ang), cy - r * math.cos(ang))
+                st = min(7, int(pt * 8))
+                if st != p["step"]:
+                    p["step"] = st
+                    cv.itemconfigure(p["item"], image=self.p_sprites[p["col"]][st])
+            self.particles = alive
+            # onda del núcleo, etiqueta que late y contadores que «ruedan» (suavizado independiente de los fps)
+            self._set(I["ripple"], "ripple", image=self.ripples[int(t * 20) % len(self.ripples)])
+            pulse = round((0.5 + 0.5 * math.sin(t * 3)) * 12) / 12
+            self._set(I["t_label"], "label", fill=_mix(C["accent"], "#bcd0ff", pulse * 0.6))
+            ease = 1 - math.exp(-dt * 9)
+            self.shown_n += (self.n - self.shown_n) * ease
+            self.shown_b += (self.b - self.shown_b) * ease
+            self._set(I["t_big"], "big", text=human(int(self.shown_b)))
+            self._set(I["t_files"], "files", text=f"{int(round(self.shown_n)):,} archivos".replace(",", "."))
             if cv.on_scan_text and now - self.last_text >= 0.25:
                 self.last_text = now
                 m, s_ = divmod(int(t), 60)
                 speed = f"{int(rate):,} archivos/s".replace(",", ".") if rate >= 1 else "preparando…"
                 cv.on_scan_text(f"{m}:{s_:02d}   ·   {speed}   ·   {self._short_path()}")
         except tk.TclError:
-            self.job = None
             return
-        spent = (time.perf_counter() - getattr(self, "frame_start", 0)) * 1000
-        self.job = cv.after(max(4, int(self.FPS_MS - spent)), self._tick)
+        # ritmo fijo: el siguiente fotograma se fija en tiempo absoluto (sin deriva acumulada)
+        period = 1.0 / self.FPS_LEVELS[self.fps_i]
+        self.next_frame += period
+        now = time.perf_counter()
+        if self.next_frame < now - period:
+            self.next_frame = now + period
+        self.job = cv.after(max(1, int((self.next_frame - now) * 1000)), self._tick)
 
     def rate(self):
         if len(self.rate_hist) < 2:
@@ -1615,6 +1759,7 @@ class Sunburst(tk.Canvas):
         self.scan_text = ""
         self.fx = ScanFX(self)
         self.on_scan_text = None  # recibe «tiempo · velocidad · ruta» mientras se analiza
+        self.is_shown = None      # la animación se pausa si devuelve False (otra página, ventana minimizada)
         self._press = None
         self._dragging = False
         self.bind("<Configure>", lambda e: self._schedule())
@@ -2773,10 +2918,11 @@ class App(ctk.CTk):
         self.sun = Sunburst(mcard, on_hover=self._map_hover, on_navigate=self._map_nav, on_context=self._map_menu,
                             on_file=self.preview, on_drag=self._sun_drag)
         self.sun.on_scan_text = lambda t: self.map_hover.configure(text=t, text_color=C["muted"])
+        self.sun.is_shown = lambda: getattr(self, "_page", None) == "analyzer" and self.state() != "iconic"
         self.sun.pack(fill="both", expand=True, padx=10, pady=10)
         self.map_hover = ctk.CTkLabel(mcard, text="Clic en un anillo para entrar · clic en el centro para subir · "
                                                   "arrastra al Colector", font=F(12), text_color=C["faint"],
-                                      anchor="w")
+                                      anchor="w", width=1)  # el texto (rutas largas) no empuja la maquetación
         self.map_hover.pack(fill="x", padx=16, pady=(0, 12))
 
         side = ctk.CTkFrame(body, fg_color="transparent")
