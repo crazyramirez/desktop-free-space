@@ -2496,6 +2496,12 @@ class App(ctk.CTk):
                 self.alert(f"Tienes la versión {VERSION}, que es la más reciente.", "Ya tienes la última versión",
                            "ok")
             return
+        if not info.asset_url:  # p. ej. la build de macOS aún no está: no se avisa hasta que exista
+            if manual:
+                self.set_status("Listo")
+                self.alert(f"Ya hay una versión v{info.version}, pero su descarga para {core.OS_NAME} todavía no "
+                           "está lista. Vuelve a mirarlo en un rato.", "Casi lista", "info")
+            return
         if not manual and core.load_settings().get("skip_version") == info.version:
             return
         self._update_info = info

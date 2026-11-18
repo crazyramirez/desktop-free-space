@@ -21,11 +21,13 @@ jobs:
         include:
           - os: windows-latest
             name: windows
-          - os: macos-latest
+          # macos-latest (macOS 26) suele tener cola; macos-15 (Apple Silicon) está fijado y con menos espera
+          - os: macos-15
             name: macos
           - os: ubuntu-22.04
             name: linux
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -77,7 +79,10 @@ jobs:
 
   release:
     needs: build
+    # Se publica aunque falle o se cancele macOS (falta de equipos en GitHub): Windows y Linux son obligatorios
+    if: ${{ !cancelled() && needs.build.result != 'skipped' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       REPO: ${{ github.repository }}
@@ -95,18 +100,33 @@ jobs:
       - name: Replace releases (keep only the latest)
         run: |
           TAG=${{ steps.ver.outputs.tag }}
-          for t in $(gh release list -R "$REPO" --limit 200 --json tagName -q '.[].tagName'); do
-            gh release delete "$t" -R "$REPO" --yes --cleanup-tag || true
+          for f in DesktopFreeSpace-Windows.exe DesktopFreeSpace-Linux-x86_64.tar.gz; do
+            [ -f "assets-out/$f" ] || { echo "::error::Falta $f: no se publica"; exit 1; }
           done
-          for t in $(gh api "repos/$REPO/tags" --paginate -q '.[].name'); do
-            gh api -X DELETE "repos/$REPO/git/refs/tags/$t" || true
-          done
+          NOTES="Windows (.exe), macOS (.dmg) y Linux (.tar.gz). Commit ${GITHUB_SHA::7}."
+          if [ -f assets-out/DesktopFreeSpace-macOS.dmg ]; then
+            # Completa: se borran todas las releases y etiquetas anteriores
+            for t in $(gh release list -R "$REPO" --limit 200 --json tagName -q '.[].tagName'); do
+              gh release delete "$t" -R "$REPO" --yes --cleanup-tag || true
+            done
+            for t in $(gh api "repos/$REPO/tags" --paginate -q '.[].name'); do
+              gh api -X DELETE "repos/$REPO/git/refs/tags/$t" || true
+            done
+          else
+            # Sin macOS: se conserva la release anterior (su .dmg sigue disponible) y solo se rehace esta etiqueta.
+            # Al relanzar el trabajo de macOS se vuelve a publicar completa y se limpia todo lo anterior.
+            echo "::warning::No hay build de macOS; se mantiene la release anterior para el .dmg"
+            gh release delete "$TAG" -R "$REPO" --yes --cleanup-tag || true
+            gh api -X DELETE "repos/$REPO/git/refs/tags/$TAG" || true
+            NOTES="Windows (.exe) y Linux (.tar.gz). La versión de macOS llegará en cuanto GitHub tenga equipos Mac libres; mientras, el .dmg anterior sigue en la release previa. Commit ${GITHUB_SHA::7}."
+          fi
           gh release create "$TAG" -R "$REPO" --target "$GITHUB_SHA" --title "Desktop Free Space $TAG" \
-            --notes "Windows (.exe), macOS (.dmg) y Linux (.tar.gz). Commit ${GITHUB_SHA::7}." \
-            assets-out/*
+            --notes "$NOTES" --latest assets-out/*
       - name: Delete old workflow runs and artifacts
         if: always()
         run: |
+          # Sin macOS se conserva todo para poder relanzar ese trabajo y completar la release
+          [ -f assets-out/DesktopFreeSpace-macOS.dmg ] || { echo "Sin macOS: no se borran ejecuciones ni artefactos"; exit 0; }
           for id in $(gh api "repos/$REPO/actions/runs" --paginate -q '.workflow_runs[].id'); do
             [ "$id" = "$GITHUB_RUN_ID" ] && continue
             gh api -X DELETE "repos/$REPO/actions/runs/$id" || true
