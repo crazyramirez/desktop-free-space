@@ -1737,9 +1737,9 @@ def _mac_bundle() -> str | None:
 # Espera a que se cierre la app, como mucho 2 min, sin bucles (Wait-Process de PowerShell).
 _WIN_WAIT = [
     'powershell -NoProfile -NonInteractive -WindowStyle Hidden -Command '
-    '"Wait-Process -Id %PID% -Timeout 120 -ErrorAction SilentlyContinue" >nul 2>nul',
+    '"Wait-Process -Id %PID% -Timeout 120 -ErrorAction SilentlyContinue" >nul 2>nul '
     # por si PowerShell no está disponible
-    "ping -n 3 127.0.0.1 >nul",
+    "|| ping -n 3 127.0.0.1 >nul",
 ]
 
 # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP. Nunca DETACHED_PROCESS: sin consola propia, cada tasklist/findstr
