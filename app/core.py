@@ -1,4 +1,4 @@
-"""Lógica de PC Free Space: análisis de disco, categorías de limpieza y borrado seguro.
+"""Lógica de Desktop Free Space: análisis de disco, categorías de limpieza y borrado seguro.
 
 No depende de la interfaz gráfica, así que se puede probar por separado.
 """

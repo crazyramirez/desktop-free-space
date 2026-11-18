@@ -40,34 +40,34 @@ jobs:
         if: matrix.name == 'windows'
         shell: pwsh
         run: |
-          pyinstaller --noconfirm --clean --onefile --windowed --name PCFreeSpace `
+          pyinstaller --noconfirm --clean --onefile --windowed --name DesktopFreeSpace `
             --icon assets\icon.ico --add-data "assets\icon.ico;." --add-data "assets\icon.png;." `
             --collect-data customtkinter app\main.py
           New-Item -ItemType Directory -Force out | Out-Null
-          Copy-Item dist\PCFreeSpace.exe out\PCFreeSpace-Windows.exe
+          Copy-Item dist\DesktopFreeSpace.exe out\DesktopFreeSpace-Windows.exe
 
       - name: Build (macOS)
         if: matrix.name == 'macos'
         run: |
-          pyinstaller --noconfirm --clean --windowed --name PCFreeSpace \
+          pyinstaller --noconfirm --clean --windowed --name DesktopFreeSpace \
             --icon assets/icon.png --add-data "assets/icon.png:." \
-            --osx-bundle-identifier com.crazyramirez.pcfreespace \
+            --osx-bundle-identifier com.crazyramirez.desktopfreespace \
             --collect-data customtkinter app/main.py
           mkdir -p out dmg
-          cp -R dist/PCFreeSpace.app dmg/
+          cp -R dist/DesktopFreeSpace.app dmg/
           ln -s /Applications dmg/Applications
-          hdiutil create -volname "PC Free Space" -srcfolder dmg -ov -format UDZO out/PCFreeSpace-macOS.dmg
+          hdiutil create -volname "Desktop Free Space" -srcfolder dmg -ov -format UDZO out/DesktopFreeSpace-macOS.dmg
 
       - name: Build (Linux)
         if: matrix.name == 'linux'
         run: |
-          pyinstaller --noconfirm --clean --onefile --windowed --name PCFreeSpace \
+          pyinstaller --noconfirm --clean --onefile --windowed --name DesktopFreeSpace \
             --add-data "assets/icon.png:." --collect-data customtkinter app/main.py
-          mkdir -p out pkg/PCFreeSpace
-          cp dist/PCFreeSpace pkg/PCFreeSpace/
-          cp assets/icon.png pkg/PCFreeSpace/pcfreespace.png
-          chmod +x pkg/PCFreeSpace/PCFreeSpace
-          tar -C pkg -czf out/PCFreeSpace-Linux-x86_64.tar.gz PCFreeSpace
+          mkdir -p out pkg/DesktopFreeSpace
+          cp dist/DesktopFreeSpace pkg/DesktopFreeSpace/
+          cp assets/icon.png pkg/DesktopFreeSpace/desktopfreespace.png
+          chmod +x pkg/DesktopFreeSpace/DesktopFreeSpace
+          tar -C pkg -czf out/DesktopFreeSpace-Linux-x86_64.tar.gz DesktopFreeSpace
 
       - uses: actions/upload-artifact@v4
         with:
@@ -101,7 +101,7 @@ jobs:
           for t in $(gh api "repos/$REPO/tags" --paginate -q '.[].name'); do
             gh api -X DELETE "repos/$REPO/git/refs/tags/$t" || true
           done
-          gh release create "$TAG" -R "$REPO" --target "$GITHUB_SHA" --title "PC Free Space $TAG" \
+          gh release create "$TAG" -R "$REPO" --target "$GITHUB_SHA" --title "Desktop Free Space $TAG" \
             --notes "Windows (.exe), macOS (.dmg) y Linux (.tar.gz). Commit ${GITHUB_SHA::7}." \
             assets-out/*
       - name: Delete old workflow runs and artifacts

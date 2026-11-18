@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Genera PC Free Space para macOS (.app) o Linux (binario único).
+# Genera Desktop Free Space para macOS (.app) o Linux (binario único).
 set -euo pipefail
 cd "$(dirname "$0")"
 PY=${PYTHON:-python3}
@@ -10,11 +10,11 @@ command -v "$PY" >/dev/null || { echo "No se encuentra Python 3.10+"; exit 1; }
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -r requirements.txt pyinstaller pillow
 if [ "$(uname)" = "Darwin" ]; then
-  .venv/bin/python -m PyInstaller --noconfirm --clean --windowed --name PCFreeSpace \
+  .venv/bin/python -m PyInstaller --noconfirm --clean --windowed --name DesktopFreeSpace \
     --icon assets/icon.png --add-data "assets/icon.png:." --collect-data customtkinter app/main.py
-  echo "Listo: $PWD/dist/PCFreeSpace.app"
+  echo "Listo: $PWD/dist/DesktopFreeSpace.app"
 else
-  .venv/bin/python -m PyInstaller --noconfirm --clean --onefile --windowed --name PCFreeSpace \
+  .venv/bin/python -m PyInstaller --noconfirm --clean --onefile --windowed --name DesktopFreeSpace \
     --add-data "assets/icon.png:." --collect-data customtkinter app/main.py
-  echo "Listo: $PWD/dist/PCFreeSpace"
+  echo "Listo: $PWD/dist/DesktopFreeSpace"
 fi

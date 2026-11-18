@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-echo === PC Free Space: generando el .exe ===
+echo === Desktop Free Space: generando el .exe ===
 set "PY="
 where py >nul 2>nul
 if not errorlevel 1 set "PY=py -3"
@@ -19,9 +19,9 @@ if not exist .venv\Scripts\python.exe (
 )
 .venv\Scripts\python.exe -m pip install --upgrade pip || goto :error
 .venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller || goto :error
-.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onefile --windowed --name PCFreeSpace --icon assets\icon.ico --add-data "assets\icon.ico;." --add-data "assets\icon.png;." --collect-data customtkinter app\main.py || goto :error
+.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onefile --windowed --name DesktopFreeSpace --icon assets\icon.ico --add-data "assets\icon.ico;." --add-data "assets\icon.png;." --collect-data customtkinter app\main.py || goto :error
 echo.
-echo Listo: %CD%\dist\PCFreeSpace.exe
+echo Listo: %CD%\dist\DesktopFreeSpace.exe
 pause
 exit /b 0
 :error

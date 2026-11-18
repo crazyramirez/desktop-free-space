@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="docs/hero.png" alt="PC Free Space" width="100%">
+<img src="docs/hero.png" alt="Desktop Free Space" width="100%">
 
-# PC Free Space
+# Desktop Free Space
 
 **Descubre qué está llenando tu disco y libera espacio sin miedo a romper nada.**
 
@@ -76,7 +76,7 @@ Calcula cuánto ocupa cada categoría y la marca como **Seguro** (se regenera so
 
 ## 🛡 Seguridad
 
-PC Free Space está pensado para que no puedas romper el sistema por accidente:
+Desktop Free Space está pensado para que no puedas romper el sistema por accidente:
 
 - **Nada se borra sin confirmación.** Antes de borrar siempre ves la lista completa de lo que se va a eliminar y su tamaño.
 - **Papelera o borrado definitivo**, a elegir en cada borrado.
@@ -95,9 +95,9 @@ Descarga la última versión desde [**Releases**](../../releases/latest):
 
 | Sistema | Archivo | Cómo abrirlo |
 |---|---|---|
-| Windows | `PCFreeSpace-Windows.exe` | Doble clic. No hay que instalar nada. |
-| macOS | `PCFreeSpace-macOS.dmg` | Abre el .dmg y arrastra la app a Aplicaciones. |
-| Linux | `PCFreeSpace-Linux-x86_64.tar.gz` | `tar xzf PCFreeSpace-Linux-x86_64.tar.gz && ./PCFreeSpace/PCFreeSpace` |
+| Windows | `DesktopFreeSpace-Windows.exe` | Doble clic. No hay que instalar nada. |
+| macOS | `DesktopFreeSpace-macOS.dmg` | Abre el .dmg y arrastra la app a Aplicaciones. |
+| Linux | `DesktopFreeSpace-Linux-x86_64.tar.gz` | `tar xzf DesktopFreeSpace-Linux-x86_64.tar.gz && ./DesktopFreeSpace/DesktopFreeSpace` |
 
 > **Aviso.** Los ejecutables no están firmados. En Windows, SmartScreen puede avisarte: pulsa *Más información* y *Ejecutar de todas formas*. En macOS, la primera vez haz clic derecho en la app y elige *Abrir*.
 
@@ -110,8 +110,8 @@ Para limpiar temporales del sistema hacen falta permisos de administrador. En Wi
 Necesitas **Python 3.10 o superior** con tkinter (en Ubuntu/Debian: `sudo apt install python3-tk`).
 
 ```bash
-git clone https://github.com/crazyramirez/PCFreeSpace.git
-cd PCFreeSpace
+git clone https://github.com/crazyramirez/desktop-free-space.git
+cd desktop-free-space
 python -m venv .venv
 # Windows: .venv\Scripts\activate    ·    macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
@@ -120,8 +120,8 @@ python app/main.py
 
 ### Generar el ejecutable
 
-- **Windows:** doble clic en **`build.bat`** → `dist\PCFreeSpace.exe`.
-- **macOS / Linux:** `./build.sh` → `dist/PCFreeSpace.app` o `dist/PCFreeSpace`.
+- **Windows:** doble clic en **`build.bat`** → `dist\DesktopFreeSpace.exe`.
+- **macOS / Linux:** `./build.sh` → `dist/DesktopFreeSpace.app` o `dist/DesktopFreeSpace`.
 
 **GitHub Actions** (`.github/workflows/build.yml`) compila las tres versiones en cada push a `main` y publica una **Release** `v<versión>` con los tres archivos. Solo se conserva la última release: las anteriores, sus etiquetas, las ejecuciones antiguas de Actions y los artifacts se borran automáticamente.
 
@@ -129,7 +129,7 @@ python app/main.py
 
 ## 🚀 Uso rápido
 
-1. Abre **Discos** para ver cuánto espacio libre te queda.
+1. Abre **Discos** para ver cuánto espacio libre te queda. Desde ahí, **Limpiar temporales y cachés** calcula lo que se puede borrar sin riesgo y **Ver qué ocupa espacio** abre el mapa del disco.
 2. En **Mapa del disco**, analiza tu disco o tu carpeta de usuario y recorre los anillos para ver qué ocupa más.
 3. Ve a **Limpieza**, pulsa **Calcular espacio**, después **Marcar las seguras** y **Limpiar seleccionadas**.
 4. Revisa **Duplicados**, **Archivos grandes** (filtra por antigüedad) y **Modelos IA**: suelen ser lo que más espacio recupera.
@@ -140,7 +140,7 @@ python app/main.py
 ## 🧱 Estructura del proyecto
 
 ```
-PCFreeSpace/
+desktop-free-space/
 ├── app/
 │   ├── core.py        # Lógica: análisis, categorías por sistema, duplicados, protección de rutas y borrado
 │   └── main.py        # Interfaz gráfica (customtkinter + mapa de anillos en tk.Canvas)

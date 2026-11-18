@@ -1,4 +1,4 @@
-"""PC Free Space: interfaz gráfica para ver y liberar espacio en disco (Windows, macOS y Linux)."""
+"""Desktop Free Space: interfaz gráfica para ver y liberar espacio en disco (Windows, macOS y Linux)."""
 from __future__ import annotations
 
 import colorsys
@@ -18,8 +18,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import core  # noqa: E402
 from core import human  # noqa: E402
 
-APP_NAME = "PC Free Space"
-VERSION = "2.1.0"
+APP_NAME = "Desktop Free Space"
+VERSION = "2.2.0"
 
 # ---------------------------------------------------------------------------
 # Sistema visual
@@ -971,7 +971,7 @@ class App(ctk.CTk):
         logo.winfo_children()[-1].pack(side="left")
         lt = ctk.CTkFrame(logo, fg_color="transparent")
         lt.pack(side="left", padx=12)
-        ctk.CTkLabel(lt, text="PC Free Space", font=F(15, "bold"), text_color=C["text"]).pack(anchor="w")
+        ctk.CTkLabel(lt, text="Desktop Free Space", font=F(15, "bold"), text_color=C["text"]).pack(anchor="w")
         ctk.CTkLabel(lt, text=f"Gestor de espacio · v{VERSION}", font=F(11), text_color=C["faint"]).pack(anchor="w")
         ctk.CTkLabel(side, text="MENÚ", font=F(10, "bold"), text_color=C["faint"]).pack(anchor="w", padx=26, pady=(0, 6))
         for key, label, ico in PAGES:
@@ -1240,10 +1240,14 @@ class App(ctk.CTk):
             info.grid(row=3, column=1, sticky="nw", pady=(0, 30))
             acts = ctk.CTkFrame(hero, fg_color="transparent")
             acts.grid(row=0, column=2, rowspan=4, padx=30)
-            btn(acts, "Analizar el disco", lambda p=sysdrive.path: self.start_scan(p), "primary",
-                width=200).pack(pady=5)
-            btn(acts, "Buscar qué borrar", lambda: (self.show("clean"), self.scan_categories()), "secondary",
-                width=200).pack(pady=5)
+            for text, cmd, kind, cap in (
+                    ("Limpiar temporales y cachés", lambda: (self.show("clean"), self.scan_categories()), "primary",
+                     "Calcula lo que se puede borrar sin riesgo"),
+                    ("Ver qué ocupa espacio", lambda p=sysdrive.path: self.start_scan(p), "secondary",
+                     "Mapa de todas las carpetas y archivos del disco")):
+                btn(acts, text, cmd, kind, width=250).pack(anchor="w", pady=(8, 0))
+                ctk.CTkLabel(acts, text=cap, font=F(11), text_color=C["muted"], height=18, anchor="w"
+                             ).pack(anchor="w", padx=4, pady=(3, 6))
             self._drive_rows.append((sysdrive.path, ring, big, bar, info, True))
 
         size, n = core.recycle_bin_size()
@@ -2445,7 +2449,7 @@ def main():
     if core.IS_WIN:
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("PCFreeSpace.App")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("DesktopFreeSpace.App")
         except Exception:  # noqa: BLE001
             pass
     ctk.set_appearance_mode("dark")
