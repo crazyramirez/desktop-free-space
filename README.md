@@ -74,6 +74,17 @@ Calcula cuánto ocupa cada categoría y la marca como **Seguro** (se regenera so
 
 ---
 
+## 🔄 Actualizaciones automáticas
+
+- Unos segundos después de abrirse, la app mira en segundo plano si hay una versión nueva en las [releases de GitHub](https://github.com/crazyramirez/desktop-free-space/releases). Si no hay conexión, no dice nada.
+- Si la hay, aparece un aviso arriba con **Actualizar ahora**, **Ver novedades** y **Omitir esta versión**. Nunca se actualiza sola: siempre tienes que pulsar tú.
+- La descarga se comprueba con su huella **SHA-256** publicada en GitHub; si no coincide, no se instala.
+- Al terminar, **Reiniciar para terminar** cierra la app, cambia el ejecutable (en Windows se guarda una copia `.old`) y la vuelve a abrir. En macOS se copia la nueva `.app` encima de la actual (si no hay permisos, se abre el `.dmg` para que la arrastres a Aplicaciones); en Linux se sustituye el binario.
+- **Buscar actualizaciones**, en la tarjeta del sistema de la barra lateral, lo comprueba cuando quieras.
+- La opción de omitir una versión se guarda en `settings.json`, en `%APPDATA%\DesktopFreeSpace` (Windows), `~/Library/Application Support/DesktopFreeSpace` (macOS) o `~/.config/DesktopFreeSpace` (Linux).
+
+---
+
 ## 🛡 Seguridad
 
 Desktop Free Space está pensado para que no puedas romper el sistema por accidente:

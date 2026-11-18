@@ -1547,3 +1547,230 @@ def run_uninstaller(cmd: str) -> None:
     if not IS_WIN:
         raise ValueError(cmd)
     subprocess.Popen(cmd, shell=True)
+
+
+# --------------------------------------------------------------------------
+# Ajustes y actualizaciones automáticas (releases de GitHub)
+# --------------------------------------------------------------------------
+UPDATE_REPO = "crazyramirez/desktop-free-space"
+UPDATE_ASSETS = {"win": "DesktopFreeSpace-Windows.exe", "mac": "DesktopFreeSpace-macOS.dmg",
+                 "linux": "DesktopFreeSpace-Linux-x86_64.tar.gz"}
+
+
+def config_dir() -> str:
+    if IS_WIN:
+        base = ROAMING
+    elif IS_MAC:
+        base = os.path.join(MAC_LIB, "Application Support")
+    else:
+        base = XDG_CONFIG
+    return os.path.join(base, "DesktopFreeSpace")
+
+
+def load_settings() -> dict:
+    try:
+        with open(os.path.join(config_dir(), "settings.json"), encoding="utf-8") as fh:
+            data = json.load(fh)
+            return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_settings(data: dict) -> None:
+    try:
+        os.makedirs(config_dir(), exist_ok=True)
+        tmp = os.path.join(config_dir(), "settings.json.tmp")
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2, ensure_ascii=False)
+        os.replace(tmp, os.path.join(config_dir(), "settings.json"))
+    except OSError:
+        pass
+
+
+def parse_version(v: str) -> tuple[int, int, int]:
+    nums = [int(n) for n in re.findall(r"\d+", v or "")[:3]]
+    nums += [0] * (3 - len(nums))
+    return nums[0], nums[1], nums[2]
+
+
+@dataclass
+class UpdateInfo:
+    version: str          # "2.3.0"
+    notes: str
+    html_url: str
+    asset_name: str = ""
+    asset_url: str = ""
+    asset_size: int = 0
+    digest: str = ""      # "sha256:..."
+
+
+def latest_release(timeout: float = 8.0) -> UpdateInfo | None:
+    """Última release publicada. Sin red, límite de la API o respuesta rara: None."""
+    import urllib.request
+    url = f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
+    req = urllib.request.Request(url, headers={"User-Agent": "DesktopFreeSpace-updater",
+                                               "Accept": "application/vnd.github+json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.load(r)
+        tag = str(data.get("tag_name", ""))
+        if not re.match(r"^[vV]?\d+\.\d+\.\d+", tag):
+            return None
+        info = UpdateInfo(tag.lstrip("vV"), str(data.get("body") or ""), str(data.get("html_url") or ""))
+        want = UPDATE_ASSETS["win" if IS_WIN else "mac" if IS_MAC else "linux"]
+        for a in data.get("assets") or []:
+            if a.get("name") == want:
+                info.asset_name = want
+                info.asset_url = str(a.get("browser_download_url") or "")
+                info.asset_size = int(a.get("size") or 0)
+                info.digest = str(a.get("digest") or "")
+        return info
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def check_update(current: str, timeout: float = 8.0) -> UpdateInfo | None:
+    """La última release si es más nueva que `current`; si no (o sin conexión), None."""
+    info = latest_release(timeout)
+    if info is None or parse_version(info.version) <= parse_version(current):
+        return None
+    return info
+
+
+def download_update(info: UpdateInfo, progress: Callable[[int, int], None] | None = None,
+                    cancel: threading.Event | None = None) -> str:
+    """Descarga el instalable a una carpeta temporal y comprueba su SHA-256. Devuelve la ruta."""
+    import hashlib
+    import tempfile
+    import urllib.request
+    if not info.asset_url:
+        raise RuntimeError("Esta versión no trae descarga para tu sistema.")
+    if not info.digest.lower().startswith("sha256:"):
+        raise RuntimeError("La descarga no trae huella SHA-256, así que no se instala por seguridad.")
+    expected = info.digest.split(":", 1)[1].strip().lower()
+    folder = tempfile.mkdtemp(prefix="dfs-update-")
+    path = os.path.join(folder, info.asset_name)
+    h = hashlib.sha256()
+    req = urllib.request.Request(info.asset_url, headers={"User-Agent": "DesktopFreeSpace-updater"})
+    done = 0
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r, open(path, "wb") as fh:
+            total = int(r.headers.get("Content-Length") or info.asset_size or 0)
+            while True:
+                if cancel is not None and cancel.is_set():
+                    raise RuntimeError("Descarga cancelada.")
+                chunk = r.read(256 * 1024)
+                if not chunk:
+                    break
+                fh.write(chunk)
+                h.update(chunk)
+                done += len(chunk)
+                if progress:
+                    progress(done, total)
+        if h.hexdigest() != expected:
+            raise RuntimeError("La huella SHA-256 no coincide: la descarga está dañada o no es la oficial.")
+    except BaseException:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
+    return path
+
+
+def is_frozen() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
+def _mac_bundle() -> str | None:
+    p = os.path.abspath(sys.executable)
+    while p and p != "/":
+        if p.endswith(".app"):
+            return p
+        p = os.path.dirname(p)
+    return None
+
+
+def _win_update_script(new: str, exe: str, pid: int) -> str:
+    return "\r\n".join([
+        "@echo off",
+        "setlocal",
+        f'set "PID={pid}"',
+        f'set "NEW={new}"',
+        f'set "EXE={exe}"',
+        ":wait",
+        'tasklist /FI "PID eq %PID%" 2>nul | find "%PID%" >nul',
+        "if not errorlevel 1 (ping -n 2 127.0.0.1 >nul & goto wait)",
+        "set /a N=0",
+        ":retry",
+        'if exist "%EXE%.old" del /f /q "%EXE%.old" >nul 2>nul',
+        'move /y "%EXE%" "%EXE%.old" >nul 2>nul',
+        'if exist "%EXE%" goto again',
+        'move /y "%NEW%" "%EXE%" >nul 2>nul',
+        'if exist "%EXE%" goto run',
+        'move /y "%EXE%.old" "%EXE%" >nul 2>nul',
+        ":again",
+        "set /a N+=1",
+        "if %N% lss 15 (ping -n 2 127.0.0.1 >nul & goto retry)",
+        ":run",
+        'start "" "%EXE%"',
+        '(goto) 2>nul & del "%~f0"',
+    ]) + "\r\n"
+
+
+def apply_update(path: str, exe: str | None = None, pid: int | None = None) -> str:
+    """Instala la descarga. Devuelve 'restart' (cerrar la app para terminar) u 'opened' (se abrió el instalador
+    para que lo termine el usuario). Lanza excepción si no se puede."""
+    exe = os.path.abspath(exe or sys.executable)
+    if IS_WIN:
+        import tempfile
+        pid = pid or os.getpid()
+        script = os.path.join(tempfile.gettempdir(), f"dfs-update-{pid}.cmd")
+        with open(script, "w", encoding="mbcs", errors="replace") as fh:
+            fh.write(_win_update_script(path, exe, pid))
+        flags = 0x08000000 | 0x00000008 | 0x00000200  # NO_WINDOW | DETACHED | NEW_PROCESS_GROUP
+        subprocess.Popen(["cmd", "/c", script], creationflags=flags, close_fds=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return "restart"
+    if IS_LINUX:
+        import tarfile
+        new = exe + ".new"
+        with tarfile.open(path, "r:gz") as tf:
+            member = next((m for m in tf.getmembers() if m.isfile() and
+                           os.path.basename(m.name) == "DesktopFreeSpace"), None)
+            if member is None:
+                raise RuntimeError("El paquete no contiene el programa.")
+            src = tf.extractfile(member)
+            with open(new, "wb") as out:
+                shutil.copyfileobj(src, out)
+        os.chmod(new, 0o755)
+        os.replace(new, exe)
+        return "restart"
+    # macOS
+    mnt = None
+    try:
+        out = subprocess.run(["hdiutil", "attach", "-nobrowse", "-noautoopen", path], capture_output=True,
+                             text=True, timeout=180).stdout
+        mnt = next((ln.split("\t")[-1].strip() for ln in out.splitlines() if "/Volumes/" in ln), None)
+        bundle = _mac_bundle()
+        app = os.path.join(mnt, "DesktopFreeSpace.app") if mnt else None
+        if not (bundle and app and os.path.isdir(app) and os.access(os.path.dirname(bundle), os.W_OK)):
+            if mnt:
+                subprocess.run(["hdiutil", "detach", mnt, "-quiet"], capture_output=True, timeout=60)
+                mnt = None
+            subprocess.Popen(["open", path])
+            return "opened"
+        r = subprocess.run(["ditto", app, bundle], capture_output=True, text=True, timeout=600)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.strip() or "No se pudo copiar la nueva versión.")
+        return "restart"
+    finally:
+        if mnt:
+            subprocess.run(["hdiutil", "detach", mnt, "-quiet"], capture_output=True, timeout=60)
+
+
+def relaunch_after_update() -> None:
+    """Linux y macOS: arranca la versión nueva. En Windows lo hace el script al cerrarse la app."""
+    if IS_LINUX:
+        os.execv(sys.executable, [sys.executable])
+    elif IS_MAC:
+        bundle = _mac_bundle()
+        if bundle:
+            subprocess.Popen(["open", "-n", bundle])

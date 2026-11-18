@@ -19,7 +19,7 @@ import core  # noqa: E402
 from core import human  # noqa: E402
 
 APP_NAME = "Desktop Free Space"
-VERSION = "2.2.0"
+VERSION = "2.3.0"
 
 # ---------------------------------------------------------------------------
 # Sistema visual
@@ -943,6 +943,7 @@ class App(ctk.CTk):
         self.after(100, self._poll)
         self.after(200, self.refresh_summary)
         self.after(50, lambda: set_dark_titlebar(self))
+        self.after(3000, self._check_updates)
 
     def _style(self):
         st = ttk.Style(self)
@@ -1002,7 +1003,10 @@ class App(ctk.CTk):
         ctk.CTkLabel(adm, text=tip, font=F(11), text_color=C["muted"], wraplength=186, justify="left"
                      ).pack(anchor="w", padx=14, pady=(4, 12))
         if core.IS_WIN and not is_admin:
-            btn(adm, "Reiniciar como admin", self._relaunch_admin, "secondary").pack(fill="x", padx=12, pady=(0, 12))
+            btn(adm, "Reiniciar como admin", self._relaunch_admin, "secondary").pack(fill="x", padx=12, pady=(0, 6))
+        upd = ctk.CTkButton(adm, text="Buscar actualizaciones", command=lambda: self._check_updates(manual=True),
+                            height=28, corner_radius=8, font=F(12, "bold"), **BTN_STYLES["ghost"])
+        upd.pack(fill="x", padx=8, pady=(0, 10))
 
         # Colector
         col = ctk.CTkFrame(side, fg_color=C["surface"], corner_radius=14, border_width=2, border_color=C["accent_soft"])
@@ -1027,10 +1031,11 @@ class App(ctk.CTk):
         main = ctk.CTkFrame(self, fg_color=C["bg"], corner_radius=0)
         main.grid(row=0, column=1, sticky="nsew")
         main.grid_columnconfigure(0, weight=1)
-        main.grid_rowconfigure(0, weight=1)
+        main.grid_rowconfigure(1, weight=1)
+        self._build_update_banner(main)
         for key, _l, _i in PAGES:
             f = ctk.CTkFrame(main, fg_color=C["bg"], corner_radius=0)
-            f.grid(row=0, column=0, sticky="nsew", padx=30, pady=(26, 0))
+            f.grid(row=1, column=0, sticky="nsew", padx=30, pady=(26, 0))
             self.pages[key] = f
         self._build_summary(self.pages["summary"])
         self._build_clean(self.pages["clean"])
@@ -1042,7 +1047,7 @@ class App(ctk.CTk):
         self._build_dups(self.pages["dups"])
 
         foot = ctk.CTkFrame(main, fg_color=C["bg"], corner_radius=0, height=48)
-        foot.grid(row=1, column=0, sticky="ew", padx=30, pady=(8, 12))
+        foot.grid(row=2, column=0, sticky="ew", padx=30, pady=(8, 12))
         foot.grid_columnconfigure(1, weight=1)
         self.dot = ctk.CTkLabel(foot, text="●", font=F(11), text_color=C["ok"], width=14)
         self.dot.grid(row=0, column=0, padx=(2, 8))
@@ -1131,6 +1136,8 @@ class App(ctk.CTk):
                     last_status = payload
                 elif kind == "scan":
                     self.sun.scan_text = payload
+                elif kind == "update":
+                    self._on_update_result(*payload)
                 elif kind == "done":
                     done, res, err, on_error = payload
                     last_status = None
@@ -2428,6 +2435,208 @@ class App(ctk.CTk):
                       sort={"size": x.size})
             self.res_info.configure(text=f"{len(residues)} carpetas · {human(sum(x.size for x in residues))}")
         self.run_task("Buscando restos de programas…", work, done)
+
+    # =====================================================================
+    # Actualizaciones
+    # =====================================================================
+    @staticmethod
+    def _current_version() -> str:
+        # DFS_FAKE_VERSION solo afecta a la comprobación (para probar el aviso)
+        return os.environ.get("DFS_FAKE_VERSION") or VERSION
+
+    def _build_update_banner(self, main):
+        b = ctk.CTkFrame(main, fg_color=C["accent_soft"], corner_radius=14, border_width=1,
+                         border_color=C["accent"])
+        b.grid(row=0, column=0, sticky="ew", padx=30, pady=(18, 0))
+        b.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(b, text="↑", font=F(18, "bold"), width=36, height=36, corner_radius=10,
+                     fg_color=C["accent"], text_color="#ffffff").grid(row=0, column=0, rowspan=2, padx=(14, 12),
+                                                                      pady=12)
+        self.upd_title = ctk.CTkLabel(b, text="", font=F(14, "bold"), text_color=C["text"], anchor="w")
+        self.upd_title.grid(row=0, column=1, sticky="sw", pady=(12, 0))
+        self.upd_sub = ctk.CTkLabel(b, text="", font=F(12), text_color=C["muted"], anchor="w")
+        self.upd_sub.grid(row=1, column=1, sticky="nw", pady=(0, 12))
+        acts = ctk.CTkFrame(b, fg_color="transparent")
+        acts.grid(row=0, column=2, rowspan=2, padx=14)
+        btn(acts, "Actualizar ahora", lambda: self._start_update(self._update_info), "primary", width=150
+            ).pack(side="left", padx=(0, 8))
+        btn(acts, "Ver novedades", lambda: self._show_notes(self._update_info), "secondary", width=130
+            ).pack(side="left", padx=(0, 4))
+        btn(acts, "Omitir esta versión", self._skip_update, "ghost", width=150).pack(side="left")
+        btn(acts, "✕", lambda: b.grid_remove(), "ghost", width=36).pack(side="left")
+        b.grid_remove()
+        self.upd_banner = b
+        self._update_info = None
+
+    def _check_updates(self, manual=False):
+        if getattr(self, "_checking", False):
+            return
+        self._checking = True
+        if manual:
+            self.set_status("Buscando actualizaciones…")
+        cur = self._current_version()
+
+        def worker():
+            info = core.latest_release()
+            self.q.put(("update", (info, cur, manual)))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_update_result(self, info, cur, manual):
+        self._checking = False
+        if info is None:
+            if manual:
+                self.set_status("Listo")
+                self.alert("No se pudo comprobar si hay una versión nueva. Revisa la conexión a Internet e "
+                           "inténtalo más tarde.", "Sin conexión", "warn")
+            return
+        newer = core.parse_version(info.version) > core.parse_version(cur)
+        if not newer:
+            if manual:
+                self.set_status("Listo")
+                self.alert(f"Tienes la versión {VERSION}, que es la más reciente.", "Ya tienes la última versión",
+                           "ok")
+            return
+        if not manual and core.load_settings().get("skip_version") == info.version:
+            return
+        self._update_info = info
+        self.upd_title.configure(text=f"Nueva versión v{info.version} disponible")
+        self.upd_sub.configure(text=f"Tienes la v{cur}." + (f"  Descarga de {human(info.asset_size)}, "
+                                                               "verificada con SHA-256." if info.asset_size else ""))
+        self.upd_banner.grid()
+        if manual:
+            self.set_status(f"Hay una versión nueva: v{info.version}")
+
+    def _skip_update(self):
+        if self._update_info:
+            s = core.load_settings()
+            s["skip_version"] = self._update_info.version
+            core.save_settings(s)
+        self.upd_banner.grid_remove()
+        self.set_status("No se volverá a avisar de esta versión. Puedes buscarla con «Buscar actualizaciones».")
+
+    def _show_notes(self, info):
+        if not info:
+            return
+        d = Dialog(self, f"Novedades de v{info.version}", width=720, height=520)
+        d.header("info", f"Desktop Free Space v{info.version}", "Lo nuevo en esta versión")
+        d.buttons([("Ver en GitHub", "secondary", "web"), ("Cerrar", "primary", None)])
+        tb = ctk.CTkTextbox(d.body, font=F(13), fg_color=C["bg"], text_color=C["muted"], border_width=1,
+                            border_color=C["border"], corner_radius=12, wrap="word")
+        tb.insert("end", info.notes.strip() or "Esta versión no incluye notas.")
+        tb.configure(state="disabled")
+        tb.pack(fill="both", expand=True, padx=24, pady=12)
+        self.wait_window(d)
+        if d.result == "web" and info.html_url:
+            self._launch(info.html_url)
+
+    def _start_update(self, info):
+        if not info:
+            return
+        if not core.is_frozen():
+            self.alert("Estás ejecutando la app desde el código. Actualízala con «git pull»; te abro la página "
+                       "de la versión nueva.", "Actualizar desde el código")
+            if info.html_url:
+                self._launch(info.html_url)
+            return
+        if self.busy:
+            self.alert("Espera a que termine la tarea actual o cancélala.", "Tarea en curso")
+            return
+        UpdateDialog(self, info)
+
+
+class UpdateDialog(Dialog):
+    """Descarga la versión nueva con barra de progreso, la verifica y la instala al reiniciar."""
+
+    def __init__(self, app, info):
+        super().__init__(app, "Actualizar", width=560, height=300)
+        self.resizable(False, False)
+        self.app, self.info = app, info
+        self.cancel = threading.Event()
+        self.q: queue.Queue = queue.Queue()
+        self.path = None
+        self.header("info", f"Actualizando a la v{info.version}",
+                    f"Se descarga {info.asset_name} ({human(info.asset_size)}) y se comprueba su huella SHA-256.")
+        self.bar = ctk.CTkProgressBar(self.body, height=10, corner_radius=5, fg_color=C["track"],
+                                      progress_color=C["accent"])
+        self.bar.set(0)
+        self.bar.pack(fill="x", padx=24, pady=(14, 6))
+        self.msg = ctk.CTkLabel(self.body, text="Conectando…", font=F(12), text_color=C["muted"], anchor="w")
+        self.msg.pack(fill="x", padx=24)
+        bar = ctk.CTkFrame(self.body, fg_color="transparent")
+        bar.pack(side="bottom", fill="x", padx=24, pady=(8, 22))
+        self.go = btn(bar, "Reiniciar para terminar", self._restart, "primary", width=200)
+        self.go.configure(state="disabled")
+        self.go.pack(side="right", padx=(8, 0))
+        self.stop = btn(bar, "Cancelar", self._cancel, "secondary", width=110)
+        self.stop.pack(side="right")
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
+        threading.Thread(target=self._download, daemon=True).start()
+        self.after(100, self._poll)
+
+    def _download(self):
+        try:
+            p = core.download_update(self.info, lambda d, t: self.q.put(("prog", (d, t))), self.cancel)
+            self.q.put(("ok", p))
+        except Exception as e:  # noqa: BLE001
+            self.q.put(("err", str(e)))
+
+    def _poll(self):
+        try:
+            while True:
+                kind, val = self.q.get_nowait()
+                if kind == "prog":
+                    d, t = val
+                    if t:
+                        self.bar.set(d / t)
+                    self.msg.configure(text=f"Descargando… {human(d)}" + (f" de {human(t)}" if t else ""))
+                elif kind == "ok":
+                    self.path = val
+                    self.bar.set(1)
+                    self.msg.configure(text="Descarga verificada (SHA-256 correcto). Reinicia para terminar.",
+                                       text_color=C["ok"])
+                    self.go.configure(state="normal")
+                elif kind == "err":
+                    self.bar.configure(progress_color=C["bad"])
+                    self.msg.configure(text=val, text_color=C["bad"])
+                    self.stop.configure(text="Cerrar")
+                    return
+                elif kind == "applied":
+                    self._finish(val)
+                    return
+        except queue.Empty:
+            pass
+        try:
+            self.after(100, self._poll)
+        except tk.TclError:
+            pass
+
+    def _cancel(self):
+        self.cancel.set()
+        self.destroy()
+
+    def _restart(self):
+        self.go.configure(state="disabled")
+        self.stop.configure(state="disabled")
+        self.msg.configure(text="Instalando…", text_color=C["muted"])
+
+        def work():
+            try:
+                self.q.put(("applied", core.apply_update(self.path)))
+            except Exception as e:  # noqa: BLE001
+                self.q.put(("err", f"No se pudo instalar: {e}"))
+        threading.Thread(target=work, daemon=True).start()
+        self.after(100, self._poll)
+
+    def _finish(self, how):
+        if how == "opened":
+            self.destroy()
+            self.app.alert("He abierto el instalador de la versión nueva. Arrastra la app a Aplicaciones para "
+                           "terminar y vuelve a abrirla.", "Termina la instalación")
+            return
+        if not core.IS_WIN:
+            core.relaunch_after_update()
+        self.app.destroy()
+        os._exit(0)
 
 
 def _pick_fonts():
