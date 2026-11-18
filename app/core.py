@@ -1734,6 +1734,22 @@ def _mac_bundle() -> str | None:
     return None
 
 
+# Espera a que se cierre la app, como mucho ~2 min (por si el PID lo reutiliza otro proceso).
+_WIN_WAIT = [
+    "set /a W=0",
+    ":wait",
+    "set /a W+=1",
+    "if %W% gtr 120 goto waited",
+    'tasklist /NH /FI "PID eq %PID%" 2>nul | findstr /C:" %PID% " >nul',
+    "if not errorlevel 1 (ping -n 2 127.0.0.1 >nul & goto wait)",
+    ":waited",
+]
+
+# CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP. Nunca DETACHED_PROCESS: sin consola propia, cada tasklist/findstr
+# abriría su propia ventana visible.
+_WIN_SCRIPT_FLAGS = 0x08000000 | 0x00000200
+
+
 def _win_update_script(new: str, exe: str, pid: int) -> str:
     return "\r\n".join([
         "@echo off",
@@ -1741,9 +1757,8 @@ def _win_update_script(new: str, exe: str, pid: int) -> str:
         f'set "PID={pid}"',
         f'set "NEW={new}"',
         f'set "EXE={exe}"',
-        ":wait",
-        'tasklist /FI "PID eq %PID%" 2>nul | find "%PID%" >nul',
-        "if not errorlevel 1 (ping -n 2 127.0.0.1 >nul & goto wait)",
+    ] + _WIN_WAIT + [
+        'if not exist "%EXE%" goto cleanup',
         "set /a N=0",
         ":retry",
         'if exist "%EXE%.old" del /f /q "%EXE%.old" >nul 2>nul',
@@ -1757,6 +1772,10 @@ def _win_update_script(new: str, exe: str, pid: int) -> str:
         "if %N% lss 15 (ping -n 2 127.0.0.1 >nul & goto retry)",
         ":run",
         'start "" "%EXE%"',
+        "goto end",
+        ":cleanup",
+        'del /f /q "%NEW%" >nul 2>nul',
+        ":end",
         '(goto) 2>nul & del "%~f0"',
     ]) + "\r\n"
 
@@ -1774,14 +1793,11 @@ def apply_update(path: str, exe: str | None = None, pid: int | None = None) -> s
             fh.write("\r\n".join([
                 "@echo off",
                 f'set "PID={pid}"',
-                ":wait",
-                'tasklist /FI "PID eq %PID%" 2>nul | find "%PID%" >nul',
-                "if not errorlevel 1 (ping -n 2 127.0.0.1 >nul & goto wait)",
+                *_WIN_WAIT,
                 f'"{path}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /RELAUNCH',
                 '(goto) 2>nul & del "%~f0"',
             ]) + "\r\n")
-        flags = 0x08000000 | 0x00000008 | 0x00000200  # NO_WINDOW | DETACHED | NEW_PROCESS_GROUP
-        subprocess.Popen(["cmd", "/c", script], creationflags=flags, close_fds=True,
+        subprocess.Popen(["cmd", "/c", script], creationflags=_WIN_SCRIPT_FLAGS, close_fds=True,
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return "restart"
     if IS_LINUX and path.endswith(".deb"):
@@ -1795,8 +1811,7 @@ def apply_update(path: str, exe: str | None = None, pid: int | None = None) -> s
         script = os.path.join(tempfile.gettempdir(), f"dfs-update-{pid}.cmd")
         with open(script, "w", encoding="mbcs", errors="replace") as fh:
             fh.write(_win_update_script(path, exe, pid))
-        flags = 0x08000000 | 0x00000008 | 0x00000200  # NO_WINDOW | DETACHED | NEW_PROCESS_GROUP
-        subprocess.Popen(["cmd", "/c", script], creationflags=flags, close_fds=True,
+        subprocess.Popen(["cmd", "/c", script], creationflags=_WIN_SCRIPT_FLAGS, close_fds=True,
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return "restart"
     if IS_LINUX:

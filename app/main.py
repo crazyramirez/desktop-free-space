@@ -19,7 +19,7 @@ import core  # noqa: E402
 from core import human  # noqa: E402
 
 APP_NAME = "Desktop Free Space"
-VERSION = "2.5.0"
+VERSION = "2.5.1"
 
 # ---------------------------------------------------------------------------
 # Sistema visual
