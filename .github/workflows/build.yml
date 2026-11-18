@@ -1,13 +1,31 @@
-name: Build Windows exe
+name: Build and release
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+          - os: macos-latest
+            name: macos
+          - os: ubuntu-22.04
+            name: linux
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -16,12 +34,83 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller==6.11.1
-      - name: Build
-        run: >
-          pyinstaller --noconfirm --clean --onefile --windowed --name PCFreeSpace
-          --icon assets\icon.ico --add-data "assets\icon.ico;." --collect-data customtkinter app\main.py
+          pip install -r requirements.txt pyinstaller==6.11.1 pillow
+
+      - name: Build (Windows)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --onefile --windowed --name PCFreeSpace `
+            --icon assets\icon.ico --add-data "assets\icon.ico;." --add-data "assets\icon.png;." `
+            --collect-data customtkinter app\main.py
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item dist\PCFreeSpace.exe out\PCFreeSpace-Windows.exe
+
+      - name: Build (macOS)
+        if: matrix.name == 'macos'
+        run: |
+          pyinstaller --noconfirm --clean --windowed --name PCFreeSpace \
+            --icon assets/icon.png --add-data "assets/icon.png:." \
+            --osx-bundle-identifier com.crazyramirez.pcfreespace \
+            --collect-data customtkinter app/main.py
+          mkdir -p out dmg
+          cp -R dist/PCFreeSpace.app dmg/
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname "PC Free Space" -srcfolder dmg -ov -format UDZO out/PCFreeSpace-macOS.dmg
+
+      - name: Build (Linux)
+        if: matrix.name == 'linux'
+        run: |
+          pyinstaller --noconfirm --clean --onefile --windowed --name PCFreeSpace \
+            --add-data "assets/icon.png:." --collect-data customtkinter app/main.py
+          mkdir -p out pkg/PCFreeSpace
+          cp dist/PCFreeSpace pkg/PCFreeSpace/
+          cp assets/icon.png pkg/PCFreeSpace/pcfreespace.png
+          chmod +x pkg/PCFreeSpace/PCFreeSpace
+          tar -C pkg -czf out/PCFreeSpace-Linux-x86_64.tar.gz PCFreeSpace
+
       - uses: actions/upload-artifact@v4
         with:
-          name: PCFreeSpace
-          path: dist/PCFreeSpace.exe
+          name: build-${{ matrix.name }}
+          path: out/*
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets-out
+          merge-multiple: true
+      - name: Read version
+        id: ver
+        run: |
+          v=$(python3 -c "import re;print(re.search(r'VERSION\s*=\s*\"([^\"]+)\"', open('app/main.py',encoding='utf-8').read()).group(1))")
+          echo "tag=v$v" >> "$GITHUB_OUTPUT"
+      - name: Replace releases (keep only the latest)
+        run: |
+          TAG=${{ steps.ver.outputs.tag }}
+          for t in $(gh release list -R "$REPO" --limit 200 --json tagName -q '.[].tagName'); do
+            gh release delete "$t" -R "$REPO" --yes --cleanup-tag || true
+          done
+          for t in $(gh api "repos/$REPO/tags" --paginate -q '.[].name'); do
+            gh api -X DELETE "repos/$REPO/git/refs/tags/$t" || true
+          done
+          gh release create "$TAG" -R "$REPO" --target "$GITHUB_SHA" --title "PC Free Space $TAG" \
+            --notes "Windows (.exe), macOS (.dmg) y Linux (.tar.gz). Commit ${GITHUB_SHA::7}." \
+            assets-out/*
+      - name: Delete old workflow runs and artifacts
+        if: always()
+        run: |
+          for id in $(gh api "repos/$REPO/actions/runs" --paginate -q '.workflow_runs[].id'); do
+            [ "$id" = "$GITHUB_RUN_ID" ] && continue
+            gh api -X DELETE "repos/$REPO/actions/runs/$id" || true
+          done
+          for a in $(gh api "repos/$REPO/actions/artifacts" --paginate -q '.artifacts[].id'); do
+            gh api -X DELETE "repos/$REPO/actions/artifacts/$a" || true
+          done

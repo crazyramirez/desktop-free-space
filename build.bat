@@ -19,7 +19,7 @@ if not exist .venv\Scripts\python.exe (
 )
 .venv\Scripts\python.exe -m pip install --upgrade pip || goto :error
 .venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller || goto :error
-.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onefile --windowed --name PCFreeSpace --icon assets\icon.ico --add-data "assets\icon.ico;." --collect-data customtkinter app\main.py || goto :error
+.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onefile --windowed --name PCFreeSpace --icon assets\icon.ico --add-data "assets\icon.ico;." --add-data "assets\icon.png;." --collect-data customtkinter app\main.py || goto :error
 echo.
 echo Listo: %CD%\dist\PCFreeSpace.exe
 pause

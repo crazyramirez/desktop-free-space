@@ -19,6 +19,9 @@ from dataclasses import dataclass, field
 from typing import Callable, Iterable
 
 IS_WIN = os.name == "nt"
+IS_MAC = sys.platform == "darwin"
+IS_LINUX = sys.platform.startswith("linux")
+OS_NAME = "Windows" if IS_WIN else "macOS" if IS_MAC else "Linux"
 
 # Atributos de archivo de Windows
 FILE_ATTRIBUTE_READONLY = 0x1
@@ -56,8 +59,12 @@ LOCAL = env("LOCALAPPDATA", os.path.join(HOME, "AppData", "Local"))
 ROAMING = env("APPDATA", os.path.join(HOME, "AppData", "Roaming"))
 PROGRAMDATA = env("PROGRAMDATA", r"C:\ProgramData")
 WINDIR = env("WINDIR", r"C:\Windows")
-SYSDRIVE = env("SystemDrive", "C:") + os.sep
-TEMP = env("TEMP", os.path.join(LOCAL, "Temp"))
+SYSDRIVE = (env("SystemDrive", "C:") + os.sep) if IS_WIN else "/"
+TEMP = env("TEMP", os.path.join(LOCAL, "Temp")) if IS_WIN else __import__("tempfile").gettempdir()
+MAC_LIB = os.path.join(HOME, "Library")
+XDG_CACHE = env("XDG_CACHE_HOME", os.path.join(HOME, ".cache"))
+XDG_CONFIG = env("XDG_CONFIG_HOME", os.path.join(HOME, ".config"))
+XDG_DATA = env("XDG_DATA_HOME", os.path.join(HOME, ".local", "share"))
 PROGRAM_FILES = [p for p in {env("ProgramFiles", r"C:\Program Files"),
                              env("ProgramFiles(x86)", r"C:\Program Files (x86)"),
                              env("ProgramW6432", r"C:\Program Files")} if p]
@@ -156,7 +163,7 @@ def list_drives() -> list[DriveInfo]:
                 if dtype in (2, 3, 4, 6):  # extraíble, fijo, red, RAM
                     roots.append(root)
     else:
-        roots = ["/"]
+        roots = _posix_mounts()
     out = []
     for r in roots:
         try:
@@ -167,7 +174,57 @@ def list_drives() -> list[DriveInfo]:
     return out
 
 
+REAL_FS = {"ext2", "ext3", "ext4", "btrfs", "xfs", "zfs", "f2fs", "jfs", "reiserfs", "ntfs", "ntfs3",
+           "fuseblk", "vfat", "exfat", "hfsplus", "apfs", "bcachefs"}
+
+
+def _posix_mounts() -> list[str]:
+    roots = ["/"]
+    if IS_LINUX:
+        try:
+            with open("/proc/mounts", encoding="utf-8") as fh:
+                for line in fh:
+                    parts = line.split()
+                    if len(parts) < 3:
+                        continue
+                    mnt, fs = parts[1].replace("\\040", " "), parts[2]
+                    if fs in REAL_FS and mnt != "/" and not mnt.startswith(("/snap", "/boot", "/var/lib", "/run/user")):
+                        roots.append(mnt)
+        except OSError:
+            pass
+    elif IS_MAC:
+        try:
+            for e in os.scandir("/Volumes"):
+                if e.is_dir() and not os.path.islink(e.path):
+                    roots.append(e.path)
+        except OSError:
+            pass
+    out, seen = [], set()
+    for r in roots:
+        try:
+            st = os.stat(r)
+            u = shutil.disk_usage(r)
+        except OSError:
+            continue
+        key = (st.st_dev, u.total)
+        if key not in seen:
+            seen.add(key)
+            out.append(r)
+    return out
+
+
 def system_files_info() -> list[tuple[str, str, int, str]]:
+    if not IS_WIN:
+        items = []
+        cands = [("Memoria de intercambio", "/swapfile", "Lo gestiona el sistema. Se puede reducir con swapoff/fallocate."),
+                 ("Memoria de intercambio", "/swap.img", "Lo gestiona el sistema. Se puede reducir con swapoff/fallocate."),
+                 ("Imagen de reposo", "/private/var/vm/sleepimage", "La gestiona macOS. Se puede desactivar con: sudo pmset -a hibernatemode 0")]
+        for label, p, tip in cands:
+            try:
+                items.append((label, p, os.stat(p).st_size, tip))
+            except OSError:
+                pass
+        return items
     """Archivos grandes del sistema que no se pueden borrar a mano, con consejo."""
     items = []
     tips = {
@@ -206,6 +263,8 @@ def protection_level(path: str) -> tuple[str, str]:
     WARN: posible, pero con aviso (Program Files: mejor desinstalar).
     OK: se puede enviar a la Papelera.
     """
+    if not IS_WIN:
+        return _posix_protection(path)
     p = norm(path)
     drive, rest = os.path.splitdrive(p)
     if rest in ("", os.sep):
@@ -233,6 +292,31 @@ def protection_level(path: str) -> tuple[str, str]:
         if is_inside(p, pf):
             return WARN, ("Está en Archivos de programa. Si la app sigue instalada, desinstálala desde la "
                           "pestaña Aplicaciones en lugar de borrar la carpeta.")
+    return OK, ""
+
+
+def _posix_protection(path: str) -> tuple[str, str]:
+    p = norm(os.path.realpath(path)) if not os.path.islink(path) else norm(path)
+    if p in ("/", ""):
+        return BLOCK, "Es la raíz del disco."
+    if p in [norm(x) for x in _posix_mounts()]:
+        return BLOCK, "Es la raíz de un disco."
+    base = [HOME, os.path.dirname(HOME), MAC_LIB, XDG_CACHE, XDG_CONFIG, XDG_DATA, os.path.join(HOME, ".local"),
+            "/Applications", "/Users", "/home", "/Volumes", "/tmp", "/var/tmp", "/private", "/private/tmp", "/opt",
+            "/media", "/mnt", "/srv"]
+    for sub in ("Desktop", "Documents", "Downloads", "Pictures", "Music", "Videos", "Movies", "Public",
+                "Escritorio", "Documentos", "Descargas", "Imágenes", "Música", "Vídeos"):
+        base.append(os.path.join(HOME, sub))
+    if p in [norm(b) for b in base]:
+        return BLOCK, "Es una carpeta base del sistema o de tu usuario (puedes borrar su contenido, no la carpeta)."
+    for sysdir in ("/System", "/usr", "/bin", "/sbin", "/etc", "/lib", "/lib32", "/lib64", "/libx32", "/boot",
+                   "/dev", "/proc", "/sys", "/run", "/snap", "/var/lib", "/var/db", "/Library", "/private/etc",
+                   "/private/var/db", "/cores", os.path.join(MAC_LIB, "Keychains"), os.path.join(HOME, ".ssh"),
+                   os.path.join(HOME, ".gnupg")):
+        if is_inside(p, sysdir):
+            return BLOCK, "Carpeta protegida del sistema."
+    if is_inside(p, "/Applications") or is_inside(p, "/opt"):
+        return WARN, "Es una aplicación instalada. Mejor desinstálala desde la sección Aplicaciones."
     return OK, ""
 
 
@@ -344,9 +428,22 @@ def delete_paths(paths: Iterable[str], permanent: bool,
 # --------------------------------------------------------------------------
 # Papelera de reciclaje (Windows)
 # --------------------------------------------------------------------------
+def _trash_dirs() -> list[str]:
+    if IS_MAC:
+        return [os.path.join(HOME, ".Trash")]
+    return [os.path.join(XDG_DATA, "Trash", "files")]
+
+
 def recycle_bin_size() -> tuple[int, int]:
     if not IS_WIN:
-        return 0, 0
+        size = n = 0
+        for d in _trash_dirs():
+            try:
+                n += len(os.listdir(d))
+            except OSError:
+                continue
+            size += dir_size(d)[0]
+        return size, n
     import ctypes
     from ctypes import wintypes
 
@@ -363,7 +460,15 @@ def recycle_bin_size() -> tuple[int, int]:
 
 def empty_recycle_bin() -> bool:
     if not IS_WIN:
-        return False
+        ok = True
+        dirs = _trash_dirs() + ([os.path.join(XDG_DATA, "Trash", "info")] if IS_LINUX else [])
+        for d in dirs:
+            try:
+                entries = [e.path for e in os.scandir(d)]
+            except OSError:
+                continue
+            ok &= delete_paths(entries, True, trusted=True).failed == 0
+        return ok
     import ctypes
     res = ctypes.windll.shell32.SHEmptyRecycleBinW(None, None, 0x1 | 0x2 | 0x4)
     return res in (0, -2147418113)  # S_OK o E_UNEXPECTED (ya vacía)
@@ -396,8 +501,45 @@ def open_in_explorer(path: str) -> None:
             subprocess.Popen(["explorer", "/select,", path])
         else:
             os.startfile(path)  # type: ignore[attr-defined]
+    elif IS_MAC:
+        subprocess.Popen(["open", "-R", path] if os.path.isfile(path) else ["open", path])
     else:
         subprocess.Popen(["xdg-open", path if os.path.isdir(path) else os.path.dirname(path)])
+
+
+def launch(target: str) -> None:
+    """Abre una herramienta del sistema, una URL de ajustes o un programa."""
+    if IS_WIN:
+        os.startfile(target)  # type: ignore[attr-defined]
+    elif IS_MAC:
+        subprocess.Popen(["open", target])
+    else:
+        exe = shutil.which(target.split()[0])
+        if exe:
+            subprocess.Popen(target.split())
+        else:
+            subprocess.Popen(["xdg-open", target])
+
+
+def system_tools() -> list[tuple[str, str, str]]:
+    """Herramientas nativas del sistema para la página de Resumen: (título, descripción, destino)."""
+    if IS_WIN:
+        return [("Liberador de espacio", "Restos de actualizaciones y del sistema", "cleanmgr.exe"),
+                ("Sensor de almacenamiento", "Limpieza automática programada", "ms-settings:storagesense"),
+                ("Puntos de restauración", "Cuánto ocupan las copias del sistema", "SystemPropertiesProtection.exe")]
+    if IS_MAC:
+        return [("Almacenamiento", "Recomendaciones de espacio de macOS",
+                 "x-apple.systempreferences:com.apple.settings.Storage"),
+                ("Monitor de Actividad", "Procesos y uso de disco", "/System/Applications/Utilities/Activity Monitor.app"),
+                ("Utilidad de Discos", "Volúmenes, particiones e instantáneas", "/System/Applications/Utilities/Disk Utility.app")]
+    tools = []
+    for exe, t1, t2 in (("baobab", "Analizador de uso de disco", "Herramienta de GNOME para ver el uso del disco"),
+                        ("gnome-system-monitor", "Monitor del sistema", "Procesos y sistemas de archivos"),
+                        ("filelight", "Filelight", "Analizador de disco de KDE"),
+                        ("gnome-disks", "Discos", "Volúmenes y particiones")):
+        if shutil.which(exe):
+            tools.append((t1, t2, exe))
+    return tools[:3]
 
 
 # --------------------------------------------------------------------------
@@ -416,6 +558,8 @@ class Category:
     risk: str = SAFE
     admin: bool = False
     close_apps: str = ""
+    exclude: set[str] = field(default_factory=set)   # nombres a excluir de los globs
+    min_age_days: int = 0                             # solo elementos sin tocar desde hace N días
     targets: list[str] = field(default_factory=list)
     target_sizes: dict[str, int] = field(default_factory=dict)
     size: int = 0
@@ -428,6 +572,8 @@ class Category:
             pat = os.path.expandvars(os.path.expanduser(pat))
             matches = glob.glob(pat) if any(c in pat for c in "*?[") else [pat]
             for m in matches:
+                if self.exclude and os.path.basename(m).lower() in self.exclude:
+                    continue
                 if os.path.lexists(m) and norm(m) not in seen:
                     seen.add(norm(m))
                     out.append(m)
@@ -444,6 +590,17 @@ class Category:
                     pass
             else:
                 items.append(t)
+        if self.min_age_days:
+            import time
+            limit = time.time() - self.min_age_days * 86400
+            fresh = []
+            for it in items:
+                try:
+                    if os.lstat(it).st_mtime < limit:
+                        fresh.append(it)
+                except OSError:
+                    pass
+            items = fresh
         return items
 
 
@@ -479,6 +636,10 @@ def _electron_apps() -> list[str]:
 
 
 def build_categories() -> list[Category]:
+    return _windows_categories() if IS_WIN else _posix_categories()
+
+
+def _windows_categories() -> list[Category]:
     L, R, H, W = LOCAL, ROAMING, HOME, WINDIR
     cats = [
         # --- Sistema ---
@@ -597,10 +758,142 @@ def build_categories() -> list[Category]:
     return cats
 
 
+def _posix_categories() -> list[Category]:
+    H, C, L, CFG, DATA = HOME, XDG_CACHE, MAC_LIB, XDG_CONFIG, XDG_DATA
+    mc = os.path.join(L, "Caches")          # ~/Library/Caches (macOS)
+    sup = os.path.join(L, "Application Support")
+    user_cache = mc if IS_MAC else C
+
+    def uc(*names):  # caché de usuario según el sistema
+        return [os.path.join(user_cache, n) for n in names]
+
+    # Subcarpetas de la caché de usuario que ya cubren otras categorías (para no contarlas dos veces)
+    handled = {"pip", "uv", "yarn", "pnpm", "go-build", "ms-playwright", "cypress", "electron", "electron-builder",
+               "huggingface", "torch", "whisper", "lm-studio", "modelscope", "insightface", "clip", "paddle",
+               "jetbrains", "homebrew", "com.apple.dt.xcode", "bun", "node-gyp", "deno", "thumbnails",
+               "conda", "pypoetry", "typescript", "mesa_shader_cache", "nvidia", "fontconfig"}
+    cats = [
+        Category("tmp_user", "Sistema", "Temporales antiguos",
+                 f"Archivos temporales de más de 2 días en {TEMP}. Los recientes no se tocan.",
+                 [os.path.join(TEMP, "*")], min_age_days=2),
+        Category("app_cache", "Navegadores", "Cachés de apps y navegadores",
+                 ("Cachés de ~/Library/Caches (Safari, Chrome, Spotify, Slack...). Se regeneran solas."
+                  if IS_MAC else "Cachés de ~/.cache (Chrome, Firefox, Spotify, Slack...). Se regeneran solas."),
+                 [os.path.join(user_cache, "*")], exclude=handled, close_apps="los navegadores y apps abiertas"),
+        Category("electron", "Navegadores", "Cachés de apps de escritorio",
+                 "Cachés de apps tipo VS Code, Discord, Slack, Teams, Cursor... Se regeneran solas.",
+                 [os.path.join(sup if IS_MAC else CFG, "*", c) for c in
+                  ("Cache", "Code Cache", "GPUCache", "DawnCache", "DawnGraphiteCache", "DawnWebGPUCache",
+                   "CachedData", "CachedExtensionVSIXs", "Service Worker/CacheStorage")]
+                 + [os.path.join(sup if IS_MAC else CFG, d, "Default", c)
+                    for d in ("Google/Chrome", "google-chrome", "chromium", "BraveSoftware/Brave-Browser",
+                              "Microsoft Edge", "microsoft-edge")
+                    for c in ("Code Cache", "GPUCache", "Service Worker/CacheStorage")],
+                 close_apps="esas aplicaciones"),
+        Category("logs", "Sistema", "Registros de usuario",
+                 "Logs de aplicaciones (~/Library/Logs)." if IS_MAC else "Registros de aplicaciones y volcados de errores.",
+                 [os.path.join(L, "Logs", "*")] if IS_MAC else
+                 [os.path.join(DATA, "xorg", "*.log*"), os.path.join(H, ".xsession-errors.old"),
+                  "/var/crash/*", os.path.join(DATA, "recently-used.xbel.bak")], min_age_days=1),
+        Category("thumbs", "Sistema", "Caché de miniaturas", "Miniaturas de imágenes. Se regeneran solas.",
+                 [os.path.join(C, "thumbnails"), os.path.join(H, ".thumbnails")] if IS_LINUX else
+                 [os.path.join(L, "Caches", "com.apple.QuickLook.thumbnailcache")]),
+        Category("gpu", "Sistema", "Cachés de sombreadores de la GPU", "Se regeneran (los juegos pueden tardar algo más).",
+                 [os.path.join(C, "mesa_shader_cache"), os.path.join(C, "nvidia"), os.path.join(H, ".nv", "GLCache"),
+                  os.path.join(C, "radv_builtin_shaders64")]),
+        # --- Desarrollo ---
+        Category("pip", "Desarrollo", "Caché de pip / Poetry (Python)", "Paquetes descargados. Se vuelven a bajar si hacen falta.",
+                 uc("pip", "pypoetry") + [os.path.join(C, "pip")]),
+        Category("uv", "Desarrollo", "Caché de uv (Python)", "Paquetes descargados por uv.",
+                 [os.path.join(C, "uv")] + uc("uv")),
+        Category("conda", "Desarrollo", "Paquetes descargados de Conda",
+                 "Equivale a 'conda clean --all'. Revisa si usas entornos sin conexión.",
+                 [os.path.join(H, d, "pkgs") for d in (".conda", "anaconda3", "miniconda3", "miniforge3", "mambaforge")]
+                 + ["/opt/anaconda3/pkgs", "/opt/miniconda3/pkgs", "/opt/homebrew/Caskroom/miniconda/base/pkgs"],
+                 risk=REVIEW),
+        Category("npm", "Desarrollo", "Caché de npm / yarn / pnpm / bun / deno", "Paquetes de Node descargados.",
+                 [os.path.join(H, ".npm", "_cacache"), os.path.join(H, ".npm", "_npx"), os.path.join(H, ".bun", "install", "cache"),
+                  os.path.join(H, ".yarn", "berry", "cache")] + uc("yarn", "Yarn", "node-gyp", "deno", "typescript", "bun")),
+        Category("pnpm_store", "Desarrollo", "Almacén de pnpm",
+                 "Paquetes compartidos por tus proyectos pnpm. Tendrás que hacer 'pnpm install' de nuevo.",
+                 [os.path.join(DATA, "pnpm", "store"), os.path.join(L, "pnpm", "store")] + uc("pnpm"), risk=REVIEW),
+        Category("gradle", "Desarrollo", "Caché de Gradle", "Dependencias y builds de Gradle/Android.",
+                 [os.path.join(H, ".gradle", d) for d in ("caches", "wrapper/dists", "daemon")]),
+        Category("android", "Desarrollo", "Emuladores e imágenes de Android",
+                 "Emuladores (AVD) e imágenes de sistema del SDK. Ocupan mucho; bórralos si no los usas.",
+                 [os.path.join(H, ".android", "avd"), os.path.join(H, "Android", "Sdk", "system-images"),
+                  os.path.join(L, "Android", "sdk", "system-images")], risk=REVIEW),
+        Category("xcode", "Desarrollo", "Xcode: DerivedData y simuladores",
+                 "Compilaciones intermedias, cachés de simuladores y soporte de dispositivos antiguos.",
+                 [os.path.join(L, "Developer", "Xcode", "DerivedData"), os.path.join(L, "Developer", "Xcode", "iOS DeviceSupport"),
+                  os.path.join(L, "Developer", "Xcode", "watchOS DeviceSupport"),
+                  os.path.join(L, "Developer", "CoreSimulator", "Caches"), os.path.join(mc, "com.apple.dt.Xcode")]),
+        Category("xcode_arch", "Desarrollo", "Xcode: archivos de apps (Archives)", "Builds archivados para publicar en la App Store.",
+                 [os.path.join(L, "Developer", "Xcode", "Archives")], risk=REVIEW),
+        Category("brew", "Desarrollo", "Caché de Homebrew", "Descargas de Homebrew. Equivale a 'brew cleanup'.",
+                 uc("Homebrew")),
+        Category("maven", "Desarrollo", "Repositorio local de Maven", "Dependencias Java descargadas.",
+                 [os.path.join(H, ".m2", "repository")], risk=REVIEW),
+        Category("nuget", "Desarrollo", "Cachés de NuGet (.NET)", "Paquetes .NET descargados.",
+                 [os.path.join(H, ".nuget", "packages"), os.path.join(DATA, "NuGet", "v3-cache")], risk=REVIEW),
+        Category("cargo", "Desarrollo", "Caché de Cargo (Rust)", "Crates descargados.",
+                 [os.path.join(H, ".cargo", "registry", "cache"), os.path.join(H, ".cargo", "registry", "src"),
+                  os.path.join(H, ".cargo", "git", "checkouts")]),
+        Category("go", "Desarrollo", "Caché de Go", "Caché de compilación y módulos de Go.",
+                 uc("go-build") + [os.path.join(H, "go", "pkg", "mod", "cache")]),
+        Category("platformio", "Desarrollo", "Caché de PlatformIO", "Descargas temporales de PlatformIO.",
+                 [os.path.join(H, ".platformio", ".cache")]),
+        Category("electron_dl", "Desarrollo", "Cachés de Electron / Playwright / Cypress",
+                 "Binarios descargados por herramientas de desarrollo.",
+                 uc("electron", "electron-builder", "Cypress", "ms-playwright") + [os.path.join(C, "Cypress")], risk=REVIEW),
+        Category("jetbrains", "Desarrollo", "Cachés de JetBrains", "Índices y cachés de IntelliJ, PyCharm, WebStorm...",
+                 uc("JetBrains")),
+        Category("unity", "Desarrollo", "Caché de Unity", "Caché de assets y paquetes de Unity.",
+                 uc("unity3d") + [os.path.join(C, "unity3d"), os.path.join(L, "Unity", "cache")], risk=REVIEW),
+        # --- IA / Modelos ---
+        Category("hf", "IA / Modelos", "Modelos de Hugging Face",
+                 "Modelos y datasets descargados (transformers, diffusers...). Se vuelven a descargar al usarlos.",
+                 [os.path.join(_hf_home(), "hub"), os.path.join(_hf_home(), "datasets"),
+                  os.path.join(_hf_home(), "xet")], risk=REVIEW),
+        Category("ollama", "IA / Modelos", "Modelos de Ollama",
+                 "TODOS los modelos de Ollama. Para borrar solo algunos usa la sección «Modelos IA».",
+                 [_ollama_models()], risk=REVIEW),
+        Category("lmstudio", "IA / Modelos", "Modelos de LM Studio", "Modelos GGUF/MLX descargados en LM Studio.",
+                 [os.path.join(H, ".lmstudio", "models"), os.path.join(C, "lm-studio", "models")], risk=REVIEW),
+        Category("torch", "IA / Modelos", "Caché de PyTorch / Whisper", "Pesos descargados por torch.hub, Whisper, etc.",
+                 [os.path.join(C, "torch"), os.path.join(C, "whisper")], risk=REVIEW),
+        Category("ml_misc", "IA / Modelos", "Otros modelos (Keras, DeepFace, rembg, ModelScope...)",
+                 "Pesos descargados por librerías de IA. Se vuelven a descargar al usarlas.",
+                 [os.path.join(H, ".keras", "models"), os.path.join(H, ".deepface", "weights"), os.path.join(H, ".rembg"),
+                  os.path.join(H, ".u2net"), os.path.join(H, ".modelscope"), os.path.join(C, "modelscope"),
+                  os.path.join(H, ".pkuseg"), os.path.join(C, "insightface"), os.path.join(H, ".insightface"),
+                  os.path.join(C, "clip"), os.path.join(C, "paddle"), os.path.join(H, ".EasyOCR", "model")], risk=REVIEW),
+        Category("gpt4all", "IA / Modelos", "Modelos de GPT4All / Jan", "Modelos descargados por GPT4All o Jan.",
+                 [os.path.join(DATA, "nomic.ai", "GPT4All"), os.path.join(sup, "nomic.ai", "GPT4All"),
+                  os.path.join(H, "jan", "models"), os.path.join(sup, "Jan", "data", "models")], risk=REVIEW),
+    ]
+    if IS_MAC:
+        cats = [c for c in cats if c.id not in ("gpu",)]
+    else:
+        cats = [c for c in cats if c.id not in ("xcode", "xcode_arch")]
+        cats.insert(2, Category("pkg_cache", "Sistema", "Caché de paquetes del sistema",
+                                "Paquetes .deb/.rpm ya instalados (apt/dnf/pacman). Necesita permisos de administrador.",
+                                ["/var/cache/apt/archives/*.deb", "/var/cache/pacman/pkg/*", "/var/cache/dnf/*"],
+                                admin=True))
+    return cats
+
+
 def scan_category(cat: Category, cancel: threading.Event | None = None) -> Category:
     cat.targets = cat.resolve()
     cat.size = cat.files = 0
     cat.target_sizes = {}
+    if cat.min_age_days:
+        for it in cat.items():
+            s, n = dir_size(it, cancel)
+            cat.size += s
+            cat.files += n
+        cat.target_sizes = {t: 0 for t in cat.targets}
+        return cat
     for t in cat.targets:
         s, n = dir_size(t, cancel)
         cat.target_sizes[t] = s
@@ -636,6 +929,42 @@ class ScanResult:
     big_files: list[tuple[int, str]]
     model_files: list[tuple[int, str]]
     errors: int
+    ext_stats: dict[str, list[int]] = field(default_factory=dict)      # ext -> [bytes, files]
+    size_buckets: dict[int, list[str]] = field(default_factory=dict)  # tamaño -> rutas (≥ 1 MB)
+    mtimes: dict[str, float] = field(default_factory=dict)            # ruta -> fecha (archivos grandes)
+
+    def kinds(self) -> list[tuple[str, int, int]]:
+        """Uso por tipo de archivo: [(tipo, bytes, archivos)] de mayor a menor."""
+        agg: dict[str, list[int]] = {}
+        for ext, (b, n) in self.ext_stats.items():
+            k = kind_of(ext)
+            a = agg.setdefault(k, [0, 0])
+            a[0] += b
+            a[1] += n
+        return sorted(((k, b, n) for k, (b, n) in agg.items()), key=lambda x: x[1], reverse=True)
+
+
+KINDS = {
+    "Vídeo": "mp4 mkv avi mov wmv flv webm m4v mpg mpeg ts m2ts 3gp vob",
+    "Imágenes": "jpg jpeg png gif bmp tif tiff webp heic heif raw cr2 nef arw dng psd svg ico avif exr hdr",
+    "Audio": "mp3 wav flac aac ogg m4a wma opus aiff alac mid midi",
+    "Documentos": "pdf doc docx xls xlsx ppt pptx odt ods odp txt rtf md csv epub mobi pages numbers key",
+    "Comprimidos y discos": "zip rar 7z tar gz tgz bz2 xz zst iso img dmg vhd vhdx vmdk qcow2 cab wim esd",
+    "Modelos de IA": "gguf ggml safetensors ckpt pt pth onnx h5 keras tflite pb mlmodel npz",
+    "Programas e instaladores": "exe msi dll sys app pkg deb rpm appimage apk ipa so dylib jar msix appx snap flatpak",
+    "Código y desarrollo": "py js ts tsx jsx java c cpp h hpp cs go rs rb php swift kt json xml yml yaml html css "
+                           "scss lock map pyc class o obj lib a pdb wasm ipynb",
+    "Bases de datos y caché": "db sqlite sqlite3 ldb log tmp cache dat idx pack bin",
+    "Juegos y 3D": "pak vpk unity3d assets fbx obj blend glb gltf uasset umap bsa ba2",
+}
+_KIND_BY_EXT = {e: k for k, exts in KINDS.items() for e in exts.split()}
+
+
+def kind_of(ext: str) -> str:
+    return _KIND_BY_EXT.get(ext.lower().lstrip("."), "Otros")
+
+
+SKIP_ROOT_DIRS = {"/proc", "/sys", "/dev", "/run", "/System/Volumes", "/Volumes", "/private/var/vm", "/snap"}
 
 
 def scan_tree(root_path: str, cancel: threading.Event | None = None,
@@ -643,6 +972,9 @@ def scan_tree(root_path: str, cancel: threading.Event | None = None,
               top_n: int = 1000) -> ScanResult:
     root = Node(root_path, root_path)
     big: list[tuple[int, str]] = []  # min-heap
+    exts: dict[str, list[int]] = {}
+    buckets: dict[int, list[str]] = {}
+    skip = {norm(p) for p in SKIP_ROOT_DIRS} if not IS_WIN else set()
     models: list[tuple[int, str]] = []
     errors = 0
     count = 0
@@ -664,7 +996,7 @@ def scan_tree(root_path: str, cancel: threading.Event | None = None,
         for e in entries:
             try:
                 if e.is_dir(follow_symlinks=False):
-                    if _is_link_dir(e):
+                    if _is_link_dir(e) or (skip and norm(e.path) in skip):
                         continue
                     child = Node(e.name, e.path)
                     node.children.append(child)
@@ -675,6 +1007,16 @@ def scan_tree(root_path: str, cancel: threading.Event | None = None,
                     node.files += 1
                     count += 1
                     total_bytes += s
+                    dot = e.name.rfind(".")
+                    ext = e.name[dot + 1:].lower() if 0 < dot < len(e.name) - 1 else ""
+                    st = exts.get(ext)
+                    if st is None:
+                        exts[ext] = [s, 1]
+                    else:
+                        st[0] += s
+                        st[1] += 1
+                    if s >= 1024 * 1024:
+                        buckets.setdefault(s, []).append(e.path)
                     if len(big) < top_n:
                         heapq.heappush(big, (s, e.path))
                     elif s > big[0][0]:
@@ -693,7 +1035,108 @@ def scan_tree(root_path: str, cancel: threading.Event | None = None,
         node.children.sort(key=lambda c: c.size, reverse=True)
     big.sort(reverse=True)
     models.sort(reverse=True)
-    return ScanResult(root, big, models, errors)
+    mtimes = {}
+    for _s, p in big:
+        try:
+            mtimes[p] = os.stat(p).st_mtime
+        except OSError:
+            pass
+    buckets = {k: v for k, v in buckets.items() if len(v) > 1}
+    return ScanResult(root, big, models, errors, exts, buckets, mtimes)
+
+
+# --------------------------------------------------------------------------
+# Duplicados (mismo tamaño -> mismo hash parcial -> mismo hash completo)
+# --------------------------------------------------------------------------
+def _hash(path: str, partial: bool, cancel=None) -> str | None:
+    import hashlib
+    h = hashlib.blake2b(digest_size=20)
+    try:
+        with open(path, "rb") as fh:
+            if partial:
+                h.update(fh.read(65536))
+                try:
+                    fh.seek(-65536, os.SEEK_END)
+                except OSError:
+                    pass
+                h.update(fh.read(65536))
+            else:
+                while True:
+                    if cancel is not None and cancel.is_set():
+                        return None
+                    chunk = fh.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    h.update(chunk)
+    except OSError:
+        return None
+    return h.hexdigest()
+
+
+@dataclass
+class DupGroup:
+    size: int
+    paths: list[str]
+
+    @property
+    def wasted(self) -> int:
+        return self.size * (len(self.paths) - 1)
+
+
+def find_duplicates(res: "ScanResult", min_size: int = 1024 * 1024, cancel=None,
+                    progress: Callable[[str], None] | None = None) -> list[DupGroup]:
+    groups: list[DupGroup] = []
+    cands = sorted(((s, p) for s, p in res.size_buckets.items() if s >= min_size), reverse=True)
+    for size, paths in cands:
+        if cancel is not None and cancel.is_set():
+            break
+        if progress:
+            progress(paths[0])
+        seen_ino, uniq = set(), []
+        for p in paths:  # los enlaces duros no son duplicados reales
+            try:
+                st = os.stat(p)
+                key = (st.st_dev, st.st_ino)
+            except OSError:
+                continue
+            if key[1] and key in seen_ino:
+                continue
+            seen_ino.add(key)
+            uniq.append(p)
+        by_part: dict[str, list[str]] = {}
+        for p in uniq:
+            hp = _hash(p, True)
+            if hp:
+                by_part.setdefault(hp, []).append(p)
+        for same in by_part.values():
+            if len(same) < 2:
+                continue
+            if size <= 131072:
+                groups.append(DupGroup(size, same))
+                continue
+            by_full: dict[str, list[str]] = {}
+            for p in same:
+                hf = _hash(p, False, cancel)
+                if hf:
+                    by_full.setdefault(hf, []).append(p)
+            groups.extend(DupGroup(size, g) for g in by_full.values() if len(g) > 1)
+    groups.sort(key=lambda g: g.wasted, reverse=True)
+    return groups
+
+
+def export_csv(res: "ScanResult", path: str) -> None:
+    import csv
+    with open(path, "w", newline="", encoding="utf-8-sig") as fh:
+        w = csv.writer(fh, delimiter=";")
+        w.writerow(["tipo", "ruta", "bytes", "tamaño", "archivos"])
+        stack = [(res.root, 0)]
+        while stack:
+            n, depth = stack.pop()
+            w.writerow(["carpeta", n.path, n.size, human(n.size), n.files])
+            if depth < 3:
+                stack.extend((c, depth + 1) for c in reversed(n.children[:50]))
+        for s, p in res.big_files:
+            w.writerow(["archivo", p, s, human(s), 1])
 
 
 # --------------------------------------------------------------------------
@@ -768,9 +1211,111 @@ class InstalledApp:
     source: str
 
 
+def _run(cmd: list[str], timeout=60) -> str:
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return p.stdout if p.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _mac_apps() -> list[InstalledApp]:
+    import plistlib
+    apps = []
+    for base in ("/Applications", os.path.join(HOME, "Applications"), "/Applications/Utilities"):
+        try:
+            entries = list(os.scandir(base))
+        except OSError:
+            continue
+        for e in entries:
+            if not e.name.endswith(".app") or not e.is_dir():
+                continue
+            info = {}
+            try:
+                with open(os.path.join(e.path, "Contents", "Info.plist"), "rb") as fh:
+                    info = plistlib.load(fh)
+            except Exception:  # noqa: BLE001
+                pass
+            name = str(info.get("CFBundleDisplayName") or info.get("CFBundleName") or e.name[:-4])
+            try:
+                date = __import__("time").strftime("%Y%m%d", __import__("time").localtime(e.stat().st_mtime))
+            except OSError:
+                date = ""
+            apps.append(InstalledApp(name=name, publisher=str(info.get("CFBundleIdentifier", "")),
+                                     version=str(info.get("CFBundleShortVersionString", "")), size=0,
+                                     location=e.path, uninstall="trash:" + e.path, install_date=date,
+                                     source="Usuario" if base.startswith(HOME) else "Sistema"))
+    return apps
+
+
+def _linux_apps() -> list[InstalledApp]:
+    apps: list[InstalledApp] = []
+    out = _run(["dpkg-query", "-W", "-f=${Package}\t${Installed-Size}\t${Version}\t${Maintainer}\n"]) \
+        if shutil.which("dpkg-query") else ""
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 3:
+            size = int(parts[1]) * 1024 if parts[1].isdigit() else 0
+            apps.append(InstalledApp(parts[0], parts[3] if len(parts) > 3 else "", parts[2], size, "",
+                                     f"sudo apt remove {parts[0]}", "", "apt"))
+    if not apps and shutil.which("rpm"):
+        for line in _run(["rpm", "-qa", "--queryformat", "%{NAME}\t%{SIZE}\t%{VERSION}\t%{VENDOR}\n"]).splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 3:
+                mgr = "dnf" if shutil.which("dnf") else "zypper" if shutil.which("zypper") else "rpm -e"
+                cmd = f"sudo {mgr} remove {parts[0]}" if mgr != "rpm -e" else f"sudo rpm -e {parts[0]}"
+                apps.append(InstalledApp(parts[0], parts[3] if len(parts) > 3 else "", parts[2],
+                                         int(parts[1]) if parts[1].isdigit() else 0, "", cmd, "", "rpm"))
+    if not apps and shutil.which("pacman"):
+        name = ver = ""
+        size = 0
+        for line in _run(["pacman", "-Qi"], timeout=120).splitlines() + [""]:
+            if line.startswith("Name"):
+                name = line.split(":", 1)[1].strip()
+            elif line.startswith("Version"):
+                ver = line.split(":", 1)[1].strip()
+            elif line.startswith("Installed Size"):
+                val = line.split(":", 1)[1].strip().split()
+                try:
+                    mult = {"B": 1, "KiB": 1024, "MiB": 1024 ** 2, "GiB": 1024 ** 3}.get(val[1], 1)
+                    size = int(float(val[0].replace(",", ".")) * mult)
+                except (IndexError, ValueError):
+                    size = 0
+            elif not line.strip() and name:
+                apps.append(InstalledApp(name, "", ver, size, "", f"sudo pacman -R {name}", "", "pacman"))
+                name, ver, size = "", "", 0
+    if shutil.which("flatpak"):
+        for line in _run(["flatpak", "list", "--app", "--columns=name,application,version,size,installation"]).splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 2:
+                apps.append(InstalledApp(parts[0], parts[1], parts[2] if len(parts) > 2 else "",
+                                         _parse_size(parts[3]) if len(parts) > 3 else 0,
+                                         os.path.join(DATA, "flatpak", "app", parts[1])
+                                         if len(parts) > 4 and parts[4] == "user" else
+                                         os.path.join("/var/lib/flatpak/app", parts[1]),
+                                         f"flatpak uninstall {parts[1]}", "", "flatpak"))
+    if shutil.which("snap"):
+        for line in _run(["snap", "list"]).splitlines()[1:]:
+            parts = line.split()
+            if parts:
+                loc = os.path.join("/snap", parts[0])
+                apps.append(InstalledApp(parts[0], parts[4] if len(parts) > 4 else "", parts[1] if len(parts) > 1 else "",
+                                         0, loc, f"sudo snap remove {parts[0]}", "", "snap"))
+    return apps
+
+
+def _parse_size(txt: str) -> int:
+    m = re.match(r"([\d.,]+)\s*([kMGT]?B)", txt.strip().replace("\xa0", " "))
+    if not m:
+        return 0
+    mult = {"B": 1, "kB": 1000, "MB": 1000 ** 2, "GB": 1000 ** 3, "TB": 1000 ** 4}[m.group(2)]
+    return int(float(m.group(1).replace(",", ".")) * mult)
+
+
 def list_installed_apps() -> list[InstalledApp]:
     if not IS_WIN:
-        return []
+        apps = _mac_apps() if IS_MAC else _linux_apps()
+        return sorted(apps, key=lambda a: a.size, reverse=True)
     import winreg
     keys = [
         (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall", winreg.KEY_WOW64_64KEY),
@@ -820,6 +1365,8 @@ def list_installed_apps() -> list[InstalledApp]:
 
 
 def list_store_apps_dirs() -> list[str]:
+    if not IS_WIN:
+        return []
     p = os.path.join(LOCAL, "Packages")
     try:
         return [e.name for e in os.scandir(p) if e.is_dir()]
@@ -896,9 +1443,19 @@ def find_residues(apps: list[InstalledApp], cancel: threading.Event | None = Non
             return True
         return any(w in t or (len(t) >= 4 and t in w) for w in words)
 
-    bases = [(ROAMING, "AppData\\Roaming"), (LOCAL, "AppData\\Local"),
-             (os.path.join(LOCAL, "Programs"), "AppData\\Local\\Programs"),
-             (PROGRAMDATA, "ProgramData")] + [(p, os.path.basename(p)) for p in PROGRAM_FILES]
+    if IS_WIN:
+        bases = [(ROAMING, "AppData\\Roaming"), (LOCAL, "AppData\\Local"),
+                 (os.path.join(LOCAL, "Programs"), "AppData\\Local\\Programs"),
+                 (PROGRAMDATA, "ProgramData")] + [(p, os.path.basename(p)) for p in PROGRAM_FILES]
+    elif IS_MAC:
+        bases = [(os.path.join(MAC_LIB, "Application Support"), "Library/Application Support"),
+                 (os.path.join(MAC_LIB, "Containers"), "Library/Containers"),
+                 (os.path.join(MAC_LIB, "Group Containers"), "Library/Group Containers"),
+                 (os.path.join(MAC_LIB, "Caches"), "Library/Caches"),
+                 (os.path.join(MAC_LIB, "Preferences"), "Library/Preferences")]
+    else:
+        bases = [(XDG_CONFIG, "~/.config"), (XDG_DATA, "~/.local/share"),
+                 (os.path.join(HOME, ".var", "app"), "~/.var/app (Flatpak)")]
     out: list[Residue] = []
     seen = set()
     for base, label in bases:
@@ -922,6 +1479,14 @@ def find_residues(apps: list[InstalledApp], cancel: threading.Event | None = Non
 
 
 def run_uninstaller(cmd: str) -> None:
+    """Windows: abre el desinstalador oficial. macOS: manda la .app a la Papelera.
+    Linux: no se ejecuta nada aquí (la interfaz muestra y copia el comando)."""
     if not cmd:
         raise ValueError("Esta aplicación no tiene desinstalador registrado.")
+    if cmd.startswith("trash:"):
+        from send2trash import send2trash
+        send2trash(cmd[6:])
+        return
+    if not IS_WIN:
+        raise ValueError(cmd)
     subprocess.Popen(cmd, shell=True)

@@ -4,15 +4,17 @@
 
 # PC Free Space
 
-**Descubre qué está llenando tu disco C: y libera espacio sin miedo a romper nada.**
+**Descubre qué está llenando tu disco y libera espacio sin miedo a romper nada.**
 
-App de escritorio para Windows que te enseña cuánto espacio libre tienes, qué lo está ocupando (temporales, cachés de navegadores y herramientas de desarrollo, modelos de IA, restos de programas desinstalados…) y te deja borrarlo con seguridad, siempre viendo antes la lista y confirmando.
+Aplicación de escritorio para **Windows, macOS y Linux**, con interfaz oscura, que dibuja un mapa interactivo de tus discos, encuentra temporales, cachés, modelos de IA, duplicados y restos de programas desinstalados, y te deja borrarlos con seguridad.
 
-[![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)](#-descarga)
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](#-instalación-desde-el-código)
-[![Licencia MIT](https://img.shields.io/badge/licencia-MIT-7c6cff)](LICENSE)
+![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
+![macOS](https://img.shields.io/badge/macOS-12%2B-000000?logo=apple&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-x86__64-FCC624?logo=linux&logoColor=black)
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![Licencia](https://img.shields.io/badge/licencia-MIT-7c6cff)
 
-[Descarga](#-descarga) · [Funcionalidades](#-funcionalidades) · [Instalación](#-instalación-desde-el-código) · [Seguridad](#-seguridad)
+[Descargar](#-descarga) · [Funcionalidades](#-funcionalidades) · [Instalación](#-instalación-desde-el-código) · [Seguridad](#-seguridad)
 
 </div>
 
@@ -20,127 +22,133 @@ App de escritorio para Windows que te enseña cuánto espacio libre tienes, qué
 
 ## ✨ Funcionalidades
 
-### 🏠 Resumen
+### Discos
+- Espacio libre, usado y total del disco del sistema, con un anillo de uso, y tarjetas para el resto de discos.
+- Tamaño de la **Papelera**, con botón para vaciarla.
+- Archivos de hibernación y memoria virtual (`hiberfil.sys`, `pagefile.sys`, `/swapfile`, `sleepimage`), con consejos para reducirlos.
+- Accesos directos a las herramientas del sistema: Liberador de espacio y Sensor de almacenamiento en Windows, Almacenamiento y Utilidad de Discos en macOS, Analizador de uso de disco en Linux.
 
-- Espacio libre y usado de **cada disco**, con un anillo de uso.
-- Tamaño de la **Papelera** y botón para vaciarla.
-- `hiberfil.sys`, `pagefile.sys` y `swapfile.sys` con su tamaño y **consejos** para reducirlos.
-- Accesos directos al **Liberador de espacio**, al **Sensor de almacenamiento** y a los **Puntos de restauración** de Windows.
+### Mapa del disco
+- **Mapa de anillos interactivo**: cada anillo es un nivel de carpetas y el tamaño de cada arco es lo que ocupa.
+- Pasa el ratón para ver el tamaño y el porcentaje; haz clic para entrar en una carpeta y en el centro para subir.
+- Ruta de navegación, lista ordenada por tamaño con barra de porcentaje y menú contextual (mostrar en el gestor de archivos, copiar ruta, añadir al Colector, borrar).
+- **Exportar a CSV** el resultado del análisis.
 
-### 🧹 Limpieza por categorías
+### Colector
+- Una cesta en la barra lateral: arrastra ahí carpetas y archivos desde cualquier pantalla y bórralos todos juntos al final, revisando la lista completa antes.
 
-Cada categoría muestra su tamaño y viene marcada como **Seguro** (se puede borrar sin pensarlo) o **Revisar** (mejor mirar antes qué hay).
+### Tipos de archivo
+- Cuánto ocupan los vídeos, imágenes, modelos de IA, comprimidos, código, documentos…, con una barra apilada y la tabla de extensiones que más ocupan.
+- Doble clic en una extensión para ver sus archivos más grandes.
+
+### Limpieza por categorías
+Calcula cuánto ocupa cada categoría y la marca como **Seguro** (se regenera sola) o **Revisar** (habría que volver a descargarlo). Las categorías se adaptan a cada sistema:
 
 | Grupo | Qué limpia |
 |---|---|
-| **Sistema** | Temporales de usuario y de Windows, descargas de Windows Update, Optimización de distribución, volcados e informes de errores, miniaturas, cachés de GPU (DirectX, NVIDIA, AMD). |
-| **Navegadores y apps** | Cachés de Chrome, Edge, Brave, Opera y Firefox **sin tocar contraseñas, historial ni sesiones**; cachés de apps Electron como VS Code, Cursor, Discord, Slack, Teams y Spotify. |
-| **Desarrollo** | pip, uv, Conda, npm, yarn, pnpm, bun, Gradle, Android (AVD e imágenes del sistema), Maven, NuGet, Cargo, Go, PlatformIO, Electron, Playwright, Cypress, Unity y Visual Studio. |
-| **IA / Modelos** | Hugging Face, Ollama, LM Studio, PyTorch Hub, Whisper, Keras, DeepFace, rembg, ModelScope, InsightFace, EasyOCR, GPT4All y Jan. |
+| **Sistema** | Temporales, Windows Update, volcados de memoria, caché de miniaturas, registros, cachés de la GPU, caché de paquetes (apt, dnf, pacman) |
+| **Navegadores y apps** | Cachés de Chrome, Edge, Brave, Opera, Firefox y Safari (sin tocar contraseñas, historial ni sesiones) y de apps Electron como VS Code, Cursor, Discord, Slack, Teams o Spotify |
+| **Desarrollo** | pip, uv, Poetry, Conda, npm, yarn, pnpm, bun, Deno, Gradle, Android, Maven, NuGet, Cargo, Go, PlatformIO, Homebrew, Xcode (DerivedData, simuladores y archivos), JetBrains y Unity |
+| **IA / Modelos** | Hugging Face, Ollama, LM Studio, PyTorch Hub, Whisper, Keras, DeepFace, rembg, ModelScope, InsightFace, EasyOCR, GPT4All y Jan |
 
-### 📂 Analizar carpetas
+### Archivos grandes
+- Los 1000 archivos más pesados del último análisis, con fecha de modificación.
+- Filtros por tamaño mínimo, por extensión o nombre y por **antigüedad** (sin tocar en 6 meses, 1 año o 2 años).
 
-Recorre `C:\` (o la carpeta que elijas) y muestra un **árbol ordenado por tamaño**, con el porcentaje que ocupa cada elemento respecto a su carpeta padre. Puedes abrir cualquier carpeta en el Explorador o borrarla con **clic derecho**.
+### Duplicados
+- Encuentra archivos idénticos comparando tamaño y huella del contenido (BLAKE2), sin falsos positivos y sin contar dos veces los enlaces duros.
+- **Marcar copias** deja el original y marca el resto para enviarlo al Colector.
 
-### 📄 Archivos grandes
+### Modelos IA
+- Lista los **modelos de Ollama por su nombre** (`llama3:latest`…) con su tamaño real y los elimina con `ollama rm`.
+- Encuentra archivos de modelos de 50 MB o más (`.gguf`, `.safetensors`, `.ckpt`, `.pt`, `.onnx`, `.bin`…) e indica su probable origen.
 
-Los **1000 archivos más pesados** del último análisis, con filtro por tamaño mínimo (de 50 MB a 5 GB) y por extensión.
-
-### 🤖 Modelos IA
-
-- Modelos de **Ollama** con su nombre real, y borrado limpio con `ollama rm`.
-- Todos los archivos `.gguf`, `.safetensors`, `.ckpt`, `.pt`, `.pth`, `.onnx`, `.bin` y `.h5` de **50 MB o más**, con su **origen probable**.
-
-### 🧩 Aplicaciones
-
-- Programas instalados (leídos del registro) con **tamaño, editor y fecha** de instalación.
-- Botón para **calcular el tamaño real** en disco.
-- Acceso al **desinstalador oficial** de cada programa.
-- Búsqueda de **posibles restos** de 20 MB o más en `AppData`, `ProgramData` y Archivos de programa de aplicaciones que ya no están instaladas.
+### Aplicaciones
+- Programas instalados: registro de Windows, apps de `/Applications` en macOS, y paquetes `dpkg`, `rpm`, `pacman`, Flatpak y Snap en Linux.
+- Abre el desinstalador oficial (Windows), envía la app a la Papelera (macOS) o te da el comando para desinstalar (Linux).
+- **Posibles restos**: carpetas de 20 MB o más en AppData y ProgramData, en `~/Library` o en `~/.config` y `~/.local/share` que no coinciden con ninguna aplicación instalada.
 
 ---
 
 ## 🛡 Seguridad
 
-PC Free Space está pensado para que no puedas romper Windows por accidente:
+PC Free Space está pensado para que no puedas romper el sistema por accidente:
 
-- **Nada se borra sin ver antes la lista** completa y confirmar.
-- Puedes elegir **Papelera** (recuperable) o **eliminar definitivamente**. Ojo: lo que va a la Papelera sigue ocupando espacio hasta que la vacías.
-- **Rutas protegidas** que nunca se borran:
-  - `C:\Windows`, salvo `Temp`, las descargas de Windows Update y los volcados de memoria.
-  - La raíz de los discos.
-  - `System Volume Information`, `Recovery`, `Boot`, `EFI` y `ProgramData\Microsoft`.
-  - `pagefile.sys` y `hiberfil.sys`.
-  - Las carpetas base de tu usuario (Escritorio, Documentos, Descargas…): se puede borrar su contenido, pero no la carpeta.
-- En **Archivos de programa** avisa de que es mejor usar el desinstalador.
-- **No sigue enlaces simbólicos ni *junctions***, así que no puede “escaparse” a otras carpetas.
-- Los archivos de **OneDrive que solo están en la nube** cuentan 0 bytes (no ocupan disco).
-- Los **archivos en uso se saltan** sin error.
-- Los **restos de aplicaciones son una estimación**: revísalos antes de borrar.
+- **Nada se borra sin confirmación.** Antes de borrar siempre ves la lista completa de lo que se va a eliminar y su tamaño.
+- **Papelera o borrado definitivo**, a elegir en cada borrado.
+- **Rutas protegidas** que nunca se borran: la raíz de los discos, `C:\Windows` (salvo temporales, Windows Update y volcados), `System Volume Information`, `Recovery`, `EFI`; en macOS y Linux `/System`, `/usr`, `/bin`, `/etc`, `/lib`, `/boot`, `/var/lib`, `/Library`, tus llaves (`~/.ssh`, `~/.gnupg`, Llaveros), y las carpetas base de tu usuario (Escritorio, Documentos, Descargas…). De estas últimas puedes borrar el contenido, pero no la carpeta.
+- **Aviso en Archivos de programa, `/Applications` y `/opt`**: recomienda desinstalar antes que borrar la carpeta.
+- No sigue enlaces simbólicos ni *junctions* y no entra en `/proc`, `/sys` ni `/dev`.
+- Los archivos de OneDrive que solo están en la nube cuentan como 0 bytes.
+- Los archivos en uso se saltan sin error.
+- Los «posibles restos» son una estimación. Revísalos antes de borrarlos.
 
 ---
 
 ## 📥 Descarga
 
-1. Descarga **`PCFreeSpace.exe`** desde [Releases](../../releases/latest).
-2. Ejecútalo. Es un **solo archivo** y **no requiere instalación**.
+Descarga la última versión desde [**Releases**](../../releases/latest):
 
-> [!NOTE]
-> Windows SmartScreen puede avisar la primera vez porque el .exe no está firmado: pulsa **Más información → Ejecutar de todas formas**.
+| Sistema | Archivo | Cómo abrirlo |
+|---|---|---|
+| Windows | `PCFreeSpace-Windows.exe` | Doble clic. No hay que instalar nada. |
+| macOS | `PCFreeSpace-macOS.dmg` | Abre el .dmg y arrastra la app a Aplicaciones. |
+| Linux | `PCFreeSpace-Linux-x86_64.tar.gz` | `tar xzf PCFreeSpace-Linux-x86_64.tar.gz && ./PCFreeSpace/PCFreeSpace` |
 
-> [!TIP]
-> Para limpiar los temporales de Windows y las descargas de Windows Update usa el botón **Reiniciar como admin** de la pestaña Resumen.
+> **Aviso.** Los ejecutables no están firmados. En Windows, SmartScreen puede avisarte: pulsa *Más información* y *Ejecutar de todas formas*. En macOS, la primera vez haz clic derecho en la app y elige *Abrir*.
+
+Para limpiar temporales del sistema hacen falta permisos de administrador. En Windows usa **Reiniciar como admin** en la barra lateral; en macOS y Linux, las categorías que lo necesitan lo indican.
 
 ---
 
 ## 🛠 Instalación desde el código
 
-Necesitas **Python 3.10 o superior**.
+Necesitas **Python 3.10 o superior** con tkinter (en Ubuntu/Debian: `sudo apt install python3-tk`).
 
-```powershell
+```bash
 git clone https://github.com/crazyramirez/PCFreeSpace.git
 cd PCFreeSpace
 python -m venv .venv
-.venv\Scripts\activate
+# Windows: .venv\Scripts\activate    ·    macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-python app\main.py
+python app/main.py
 ```
 
-### Generar el .exe
+### Generar el ejecutable
 
-- **En tu PC:** haz doble clic en `build.bat`. Al terminar tendrás `dist\PCFreeSpace.exe`.
-- **Con GitHub Actions:** el workflow [`build.yml`](.github/workflows/build.yml) genera el .exe como *artifact* en cada push a `main` (pestaña *Actions* → *Artifacts*).
+- **Windows:** doble clic en **`build.bat`** → `dist\PCFreeSpace.exe`.
+- **macOS / Linux:** `./build.sh` → `dist/PCFreeSpace.app` o `dist/PCFreeSpace`.
+
+**GitHub Actions** (`.github/workflows/build.yml`) compila las tres versiones en cada push a `main` y publica una **Release** `v<versión>` con los tres archivos. Solo se conserva la última release: las anteriores, sus etiquetas, las ejecuciones antiguas de Actions y los artifacts se borran automáticamente.
 
 ---
 
 ## 🚀 Uso rápido
 
-1. **Resumen**: mira cuánto espacio libre tienes y si la Papelera o la hibernación ocupan mucho.
-2. **Limpieza**: pulsa **Calcular espacio**, luego **Marcar las seguras** y por último **Limpiar seleccionadas**.
-3. **Analizar carpetas**: busca qué carpetas ocupan más y bórralas con clic derecho si no las necesitas.
-4. **Modelos IA** y **Archivos grandes**: localiza modelos y archivos enormes que ya no usas.
-5. **Aplicaciones**: desinstala lo que sobra y revisa los posibles restos.
+1. Abre **Discos** para ver cuánto espacio libre te queda.
+2. En **Mapa del disco**, analiza tu disco o tu carpeta de usuario y recorre los anillos para ver qué ocupa más.
+3. Ve a **Limpieza**, pulsa **Calcular espacio**, después **Marcar las seguras** y **Limpiar seleccionadas**.
+4. Revisa **Duplicados**, **Archivos grandes** (filtra por antigüedad) y **Modelos IA**: suelen ser lo que más espacio recupera.
+5. Lo que quieras borrar, échalo al **Colector** y bórralo todo junto al final.
 
 ---
 
 ## 🧱 Estructura del proyecto
 
-```text
+```
 PCFreeSpace/
 ├── app/
-│   ├── core.py          # lógica: escaneo, categorías y borrado seguro (sin interfaz)
-│   └── main.py          # interfaz gráfica con customtkinter
-├── assets/
-│   └── icon.ico         # icono de la app
-├── docs/
-│   └── hero.png         # imagen de portada del README
-├── .github/workflows/
-│   └── build.yml        # compila el .exe en GitHub Actions
-├── build.bat            # genera dist\PCFreeSpace.exe en local
-└── requirements.txt
+│   ├── core.py        # Lógica: análisis, categorías por sistema, duplicados, protección de rutas y borrado
+│   └── main.py        # Interfaz gráfica (customtkinter + mapa de anillos en tk.Canvas)
+├── assets/            # Iconos (icon.ico, icon.png)
+├── docs/hero.png      # Imagen de portada
+├── build.bat          # Genera el .exe (Windows)
+├── build.sh           # Genera la app (macOS) o el binario (Linux)
+├── requirements.txt
+└── .github/workflows/build.yml
 ```
 
-**Tecnologías:** [Python](https://www.python.org/) · [customtkinter](https://github.com/TomSchimansky/CustomTkinter) · [Send2Trash](https://github.com/arsenetar/send2trash) · [PyInstaller](https://pyinstaller.org/)
+**Tecnologías:** Python, [customtkinter](https://github.com/TomSchimansky/CustomTkinter), [Send2Trash](https://github.com/arsenetar/send2trash) y [PyInstaller](https://pyinstaller.org).
 
 ---
 
