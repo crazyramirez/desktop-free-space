@@ -1,8 +1,11 @@
 """PC Free Space: interfaz gráfica para ver y liberar espacio en disco (Windows, macOS y Linux)."""
 from __future__ import annotations
 
+import colorsys
+import math
 import os
 import queue
+import shutil
 import sys
 import threading
 import tkinter as tk
@@ -16,32 +19,41 @@ import core  # noqa: E402
 from core import human  # noqa: E402
 
 APP_NAME = "PC Free Space"
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 
 # ---------------------------------------------------------------------------
 # Sistema visual
 # ---------------------------------------------------------------------------
 C = {
-    "bg": "#0b0d12",          # fondo de la ventana
-    "side": "#0f1218",        # barra lateral
-    "surface": "#141821",     # tarjetas
-    "surface2": "#1a1f2a",    # elementos dentro de tarjetas
-    "hover": "#222836",
-    "border": "#232a37",
-    "text": "#e8ebf2",
-    "muted": "#8b93a5",
-    "faint": "#5d6577",
-    "accent": "#7c6cff",      # violeta
-    "accent_h": "#6a59f5",
-    "accent_soft": "#211d3d",
-    "ok": "#34d399",
-    "warn": "#fbbf24",
-    "bad": "#f87171",
-    "bad_h": "#ef4444",
-    "bad_soft": "#2a1619",
-    "sel": "#2a2550",
+    "bg": "#0a0f1e",          # fondo de la ventana (azul noche)
+    "side": "#0c1224",        # barra lateral
+    "surface": "#111933",     # tarjetas
+    "surface2": "#172142",    # elementos dentro de tarjetas
+    "hover": "#1d2a52",
+    "border": "#1e2a4c",
+    "track": "#1a2547",       # fondo de anillos y barras
+    "odd": "#131c39",
+    "scroll": "#22305a",
+    "scroll_h": "#2c3d70",
+    "text": "#eef2ff",
+    "muted": "#97a3c7",
+    "faint": "#5f6c94",
+    "accent": "#3d7bfd",      # azul
+    "accent2": "#8b5cf6",     # violeta (degradados)
+    "accent_h": "#2f6bf0",
+    "accent_soft": "#16295c",
+    "ok": "#3ddc97",
+    "warn": "#ffc145",
+    "bad": "#ff6b6b",
+    "bad_h": "#f04452",
+    "bad_hh": "#d93644",
+    "bad_soft": "#2a1430",
+    "bad_soft_h": "#3a1a3c",
+    "bad_border": "#4d1f40",
+    "bad_off": "#7a2e45",     # botón rojo desactivado (texto blanco legible)
+    "sel": "#1f3a85",
 }
-RADIUS = 14
+RADIUS = 16
 CHECK_ON, CHECK_OFF = "☑", "☐"
 UI_FONT = "Segoe UI"
 MONO_FONT = "Consolas"
@@ -77,12 +89,14 @@ def card(master, **kw):
 
 
 BTN_STYLES = {
-    "primary": dict(fg_color=C["accent"], hover_color=C["accent_h"], text_color="#ffffff", border_width=0),
+    "primary": dict(fg_color=C["accent"], hover_color=C["accent_h"], text_color="#ffffff",
+                    text_color_disabled="#ffffff", border_width=0),
     "secondary": dict(fg_color=C["surface2"], hover_color=C["hover"], text_color=C["text"],
                       border_width=1, border_color=C["border"]),
-    "danger": dict(fg_color=C["bad_soft"], hover_color="#3a1c21", text_color=C["bad"],
-                   border_width=1, border_color="#4a2229"),
-    "danger_solid": dict(fg_color=C["bad_h"], hover_color="#dc2626", text_color="#ffffff", border_width=0),
+    "danger": dict(fg_color=C["bad_soft"], hover_color=C["bad_soft_h"], text_color=C["bad"],
+                   border_width=1, border_color=C["bad_border"]),
+    "danger_solid": dict(fg_color=C["bad_h"], hover_color=C["bad_hh"], text_color="#ffffff",
+                         text_color_disabled="#ffffff", border_width=0),
     "ghost": dict(fg_color="transparent", hover_color=C["hover"], text_color=C["muted"], border_width=0),
 }
 
@@ -102,7 +116,8 @@ def set_dark_titlebar(win):
         val = ctypes.c_int(1)
         for attr in (20, 19):
             ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(val), ctypes.sizeof(val))
-        col = ctypes.c_int(0x00120D0B)  # color de la barra (BGR de C["bg"]) en Windows 11
+        r, g, b = _rgb(C["bg"])
+        col = ctypes.c_int((b << 16) | (g << 8) | r)  # color de la barra (BGR) en Windows 11
         ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(col), ctypes.sizeof(col))
     except Exception:  # noqa: BLE001
         pass
@@ -131,13 +146,13 @@ class Table(ctk.CTkFrame):
             self.tv.heading(cid, text=title, anchor=anchor, command=lambda c=cid: self.sort_by(c))
             self.tv.column(cid, width=width, anchor=anchor, stretch=cid in ("name", "path"))
         sb = ctk.CTkScrollbar(self, command=self.tv.yview, fg_color="transparent",
-                              button_color=C["hover"], button_hover_color="#2e3546")
+                              button_color=C["scroll"], button_hover_color=C["scroll_h"])
         self.tv.configure(yscrollcommand=sb.set)
         self.tv.grid(row=0, column=0, sticky="nsew", padx=(10, 0), pady=10)
         sb.grid(row=0, column=1, sticky="ns", padx=(2, 6), pady=12)
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
-        self.tv.tag_configure("odd", background="#171c26")
+        self.tv.tag_configure("odd", background=C["odd"])
         self.tv.tag_configure("warn", foreground=C["warn"])
         self.tv.tag_configure("muted", foreground=C["faint"])
         self.tv.tag_configure("checked", background=C["accent_soft"])
@@ -241,6 +256,42 @@ class Table(ctk.CTkFrame):
             self.tv.item(k, tags=tags)
         for cid, title in self.titles.items():
             self.tv.heading(cid, text=title + (("  ▼" if rev else "  ▲") if cid == col else ""))
+
+    def enable_drag(self, callback):
+        """Arrastrar las filas seleccionadas (al Colector). callback(fase, objetos, evento)."""
+        st = {"press": None, "on": False}
+
+        def down(e):
+            st["press"], st["on"] = (e.x, e.y), False
+
+        def move(e):
+            if not st["press"]:
+                return
+            if not st["on"]:
+                if abs(e.x - st["press"][0]) + abs(e.y - st["press"][1]) < 10:
+                    return
+                row = self.tv.identify_row(st["press"][1])
+                if not row:
+                    return
+                if row not in self.tv.selection():
+                    self.tv.selection_set(row)
+                objs = [o for o in self.selected() if o is not None]
+                if not objs:
+                    return
+                st["on"] = True
+                callback("start", objs, e)
+            else:
+                callback("move", None, e)
+            return "break"
+
+        def up(e):
+            if st["on"]:
+                callback("drop", None, e)
+            st["press"], st["on"] = None, False
+
+        self.tv.bind("<ButtonPress-1>", down, add="+")
+        self.tv.bind("<B1-Motion>", move, add="+")
+        self.tv.bind("<ButtonRelease-1>", up, add="+")
 
     def context_menu(self, items):
         menu = tk.Menu(self.tv, tearoff=0, bg=C["surface2"], fg=C["text"], activebackground=C["accent"],
@@ -371,33 +422,101 @@ class ConfirmDelete(Dialog):
 
 
 # ---------------------------------------------------------------------------
-# Anillo de uso del disco
+# Dibujo suavizado (Pillow) y colores
+# ---------------------------------------------------------------------------
+try:
+    from PIL import Image, ImageDraw, ImageTk
+except Exception:  # noqa: BLE001
+    Image = ImageDraw = ImageTk = None
+
+
+def _rgb(c: str) -> tuple[int, int, int]:
+    return int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16)
+
+
+def _mix(c1: str, c2: str, t: float) -> str:
+    a, b = _rgb(c1), _rgb(c2)
+    return "#" + "".join(f"{int(x + (y - x) * t):02x}" for x, y in zip(a, b))
+
+
+def hsl(h: float, s: float, l: float) -> str:
+    r, g, b = colorsys.hls_to_rgb((h % 360) / 360, max(0, min(1, l)), max(0, min(1, s)))
+    return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
+
+
+def _scale_of(widget) -> float:
+    try:
+        return ctk.ScalingTracker.get_widget_scaling(widget)
+    except Exception:  # noqa: BLE001
+        return 1.0
+
+
+def _arc_pts(cx, cy, r, a0, a1, step=1.2):
+    """Puntos de un arco (grados, 0 = arriba, sentido horario)."""
+    n = max(2, int(abs(a1 - a0) / step) + 1)
+    out = []
+    for i in range(n + 1):
+        a = math.radians(a0 + (a1 - a0) * i / n - 90)
+        out.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Anillo de uso del disco (degradado, suavizado)
 # ---------------------------------------------------------------------------
 class Ring(tk.Canvas):
-    def __init__(self, master, size=180, thickness=16, bg=C["surface"]):
-        try:
-            self.k = ctk.ScalingTracker.get_widget_scaling(master)
-        except Exception:  # noqa: BLE001
-            self.k = 1.0
+    SS = 3
+
+    def __init__(self, master, size=180, thickness=16, bg=None):
+        self.k = _scale_of(master)
         s = int(size * self.k)
-        super().__init__(master, width=s, height=s, bg=bg, highlightthickness=0, bd=0)
+        self.bgc = bg or C["surface"]
+        super().__init__(master, width=s, height=s, bg=self.bgc, highlightthickness=0, bd=0)
         self.s, self.t = s, int(thickness * self.k)
         self.f = size / 180
+        self._photo = None
 
     def draw(self, pct, big, small):
         self.delete("all")
         s, t = self.s, self.t
-        p = t / 2 + 2
-        self.create_oval(p, p, s - p, s - p, outline=C["surface2"], width=t)
-        if pct > 0:
-            self.create_arc(p, p, s - p, s - p, start=90, extent=-359.9 * min(pct, 1.0), style="arc",
-                            outline=level_color(pct), width=t)
+        pct = max(0.0, min(pct, 1.0))
+        c1, c2 = (C["accent"], C["accent2"]) if pct < 0.75 else (C["warn"], "#ff8a3d") if pct < 0.9 else \
+            (C["bad"], "#ff3d7f")
+        if Image is not None:
+            ss = self.SS
+            img = Image.new("RGB", (s * ss, s * ss), self.bgc)
+            d = ImageDraw.Draw(img)
+            p = (t / 2 + 2) * ss
+            box = (p, p, s * ss - p, s * ss - p)
+            d.ellipse(box, outline=C["track"], width=t * ss)
+            if pct > 0:
+                steps = max(2, int(120 * pct))
+                ext = 360 * pct
+                for i in range(steps):
+                    a0 = -90 + ext * i / steps
+                    a1 = -90 + ext * (i + 1) / steps + 0.6
+                    d.arc(box, a0, min(a1, -90 + ext), fill=_mix(c1, c2, i / steps), width=t * ss)
+                # extremos redondeados
+                r = (s * ss - 2 * p) / 2 - t * ss / 2  # PIL dibuja el trazo hacia dentro
+                cx = cy = s * ss / 2
+                for ang, col in ((-90, c1), (-90 + ext, c2)):
+                    x = cx + r * math.cos(math.radians(ang))
+                    y = cy + r * math.sin(math.radians(ang))
+                    d.ellipse((x - t * ss / 2, y - t * ss / 2, x + t * ss / 2, y + t * ss / 2), fill=col)
+            img = img.resize((s, s), Image.LANCZOS)
+            self._photo = ImageTk.PhotoImage(img)
+            self.create_image(0, 0, image=self._photo, anchor="nw")
+        else:
+            p = t / 2 + 2
+            self.create_oval(p, p, s - p, s - p, outline=C["track"], width=t)
+            if pct > 0:
+                self.create_arc(p, p, s - p, s - p, start=90, extent=-359.9 * pct, style="arc", outline=c1, width=t)
         f = self.f
         if f < 0.7:
-            self.create_text(s / 2, s / 2, text=big, fill=C["text"], font=(UI_FONT, max(10, round(22 * f)), "bold"))
+            self.create_text(s / 2, s / 2, text=big, fill=C["text"], font=(UI_FONT, max(10, round(21 * f)), "bold"))
             return
-        self.create_text(s / 2, s / 2 - 9 * self.k * f, text=big, fill=C["text"], font=(UI_FONT, round(22 * f), "bold"))
-        self.create_text(s / 2, s / 2 + 18 * self.k * f, text=small, fill=C["muted"], font=(UI_FONT, 10))
+        self.create_text(s / 2, s / 2 - 9 * self.k * f, text=big, fill=C["text"], font=(UI_FONT, round(24 * f), "bold"))
+        self.create_text(s / 2, s / 2 + 19 * self.k * f, text=small, fill=C["muted"], font=(UI_FONT, 10))
 
 
 # ---------------------------------------------------------------------------
@@ -408,56 +527,79 @@ PAGES = [("summary", "Discos", "home"), ("analyzer", "Mapa del disco", "map"), (
          ("models", "Modelos IA", "ai"), ("apps", "Aplicaciones", "apps")]
 EMPTY_SCAN = "Analiza un disco o una carpeta en «Mapa del disco» para ver aquí sus datos"
 
-
 # ---------------------------------------------------------------------------
 # Mapa de anillos interactivo (sunburst)
 # ---------------------------------------------------------------------------
-PALETTE = ["#7c6cff", "#38bdf8", "#34d399", "#fbbf24", "#f472b6", "#60a5fa", "#fb923c", "#2dd4bf",
-           "#a3e635", "#f87171", "#c084fc", "#facc15"]
-FILES_COLOR = "#4b5468"
-SMALL_COLOR = "#2b3140"
+PALETTE = ["#4f8bff", "#38d0c4", "#5ee08a", "#ffd23f", "#ff9f43", "#ff6b8b", "#c56cf0", "#7f7bff",
+           "#3fc1ff", "#a3e635", "#ff7eb6", "#ffb86b"]
+SMALL_COLOR = "#2a3558"
+HIDDEN_COLOR = "#3a4466"
 
 
-def _mix(c1: str, c2: str, t: float) -> str:
-    a = [int(c1[i:i + 2], 16) for i in (1, 3, 5)]
-    b = [int(c2[i:i + 2], 16) for i in (1, 3, 5)]
-    return "#" + "".join(f"{int(x + (y - x) * t):02x}" for x, y in zip(a, b))
+def seg_color(mid_deg: float, depth: int, is_file: bool = False) -> str:
+    """Arcoíris por posición, como un mapa de calor suave: verde → amarillo → naranja → rosa → violeta → azul."""
+    hue = 150 - (mid_deg / 360) * 290
+    sat = 0.66 - 0.07 * (depth - 1)
+    lig = 0.58 + 0.045 * (depth - 1)
+    if is_file:
+        sat -= 0.2
+        lig += 0.03
+    return hsl(hue, sat, min(lig, 0.8))
 
 
 class Sunburst(tk.Canvas):
     """Mapa circular por niveles: cada anillo es un nivel de carpetas, el ángulo es su tamaño."""
 
-    DEPTH = 4
-    MIN_DEG = 0.7
+    DEPTH = 5
+    MIN_DEG = 0.9
+    SS = 2
+    WEIGHTS = (1.0, 0.9, 0.8, 0.7, 0.62)
 
-    def __init__(self, master, on_hover=None, on_navigate=None, on_context=None, bg=C["surface"]):
-        super().__init__(master, bg=bg, highlightthickness=0, bd=0)
-        self.bgc = bg
+    def __init__(self, master, on_hover=None, on_navigate=None, on_context=None, on_file=None, on_drag=None,
+                 bg=None):
+        self.bgc = bg or C["surface"]
+        super().__init__(master, bg=self.bgc, highlightthickness=0, bd=0)
         self.root_node: core.Node | None = None
+        self.base_root: core.Node | None = None
+        self.hidden = 0
         self.history: list[core.Node] = []
-        self.segs: list[tuple] = []        # (depth, a0, a1, node|None, item_id, color, label)
-        self.hover_item = None
+        self.segs: list[list] = []        # [depth, a0, a1, node|None, color, label, size, kind]
+        self.hover_seg = None
         self.on_hover, self.on_navigate, self.on_context = on_hover, on_navigate, on_context
+        self.on_file, self.on_drag = on_file, on_drag
+        self._photo = None
+        self._job = None
+        self._anim = None
+        self._spin = None
+        self._spin_a = 0
+        self.scan_text = ""
+        self._press = None
+        self._dragging = False
         self.bind("<Configure>", lambda e: self._schedule())
         self.bind("<Motion>", self._motion)
         self.bind("<Leave>", lambda e: self._set_hover(None))
-        self.bind("<Button-1>", self._click)
+        self.bind("<ButtonPress-1>", self._b1_down)
+        self.bind("<B1-Motion>", self._b1_move)
+        self.bind("<ButtonRelease-1>", self._b1_up)
         for seq in ("<Button-3>",) + (("<Button-2>", "<Control-Button-1>") if core.IS_MAC else ()):
             self.bind(seq, self._right)
-        self._job = None
 
     # -- navegación --
-    def set_root(self, node, push=True):
+    def set_root(self, node, push=True, animate=True):
         if push and self.root_node is not None and node is not self.root_node:
             self.history.append(self.root_node)
         self.root_node = node
-        self.redraw()
+        self._layout()
+        self.redraw(animate=animate)
         if self.on_navigate:
             self.on_navigate(node)
 
-    def reset(self, node):
+    def reset(self, node, hidden=0):
+        self.stop_scanning()
         self.history.clear()
         self.root_node = None
+        self.base_root = node
+        self.hidden = hidden
         self.set_root(node, push=False)
 
     def up(self):
@@ -465,107 +607,240 @@ class Sunburst(tk.Canvas):
             self.set_root(self.history.pop(), push=False)
 
     def go_to(self, node):
-        # recortar la historia hasta ese nodo
         while self.history and self.history[-1] is not node:
             self.history.pop()
         if self.history:
             self.history.pop()
         self.set_root(node, push=False)
 
-    # -- dibujo --
-    def _schedule(self):
-        if self._job:
-            self.after_cancel(self._job)
-        self._job = self.after(60, self.redraw)
+    # -- análisis en curso --
+    def start_scanning(self, text=""):
+        self.scan_text = text
+        if self._spin is None:
+            self._spin_tick()
 
+    def stop_scanning(self):
+        if self._spin is not None:
+            self.after_cancel(self._spin)
+            self._spin = None
+
+    def _spin_tick(self):
+        self._spin_a = (self._spin_a + 9) % 360
+        self.delete("all")
+        cx, cy, rad = self.geometry_()
+        R = rad[-1] * 0.62
+        self.create_oval(cx - R, cy - R, cx + R, cy + R, outline=C["track"], width=max(6, R * 0.07))
+        for i in range(14):
+            a0 = self._spin_a - i * 7
+            col = _mix(C["accent"], C["track"], i / 14)
+            self.create_arc(cx - R, cy - R, cx + R, cy + R, start=-a0 + 90, extent=-8, style="arc", outline=col,
+                            width=max(6, R * 0.07))
+        self.create_text(cx, cy - 12, text="Analizando…", fill=C["text"], font=(UI_FONT, 15, "bold"))
+        self.create_text(cx, cy + 14, text=self.scan_text, fill=C["muted"], font=(UI_FONT, 10))
+        self._spin = self.after(40, self._spin_tick)
+
+    # -- geometría --
     def geometry_(self):
         w, h = max(self.winfo_width(), 50), max(self.winfo_height(), 50)
-        R = min(w, h) / 2 - 14
-        r0 = R * 0.30
-        ring = (R - r0) / self.DEPTH
-        return w / 2, h / 2, r0, ring
+        R = min(w, h) / 2 - 12
+        r0 = R * 0.27
+        tot = sum(self.WEIGHTS[:self.DEPTH])
+        rad = [r0]
+        for wgt in self.WEIGHTS[:self.DEPTH]:
+            rad.append(rad[-1] + (R - r0) * wgt / tot)
+        return w / 2, h / 2, rad
 
-    def _sector(self, cx, cy, r1, r2, a0, a1):
-        import math
-        steps = max(2, int((a1 - a0) / 2.5) + 1)
-        pts = []
-        for i in range(steps + 1):
-            a = math.radians(a0 + (a1 - a0) * i / steps - 90)
-            pts += [cx + r2 * math.cos(a), cy + r2 * math.sin(a)]
-        for i in range(steps, -1, -1):
-            a = math.radians(a0 + (a1 - a0) * i / steps - 90)
-            pts += [cx + r1 * math.cos(a), cy + r1 * math.sin(a)]
-        return pts
-
-    def redraw(self):
-        self.delete("all")
-        self.segs.clear()
-        self.hover_item = None
+    def _layout(self):
+        self.segs = []
         node = self.root_node
-        cx, cy, r0, ring = self.geometry_()
         if node is None:
-            self.create_text(cx, cy, text="Analiza un disco o una carpeta", fill=C["faint"], font=(UI_FONT, 12))
             return
-        total = node.size or 1
+        hidden = self.hidden if node is self.base_root else 0
+        total = (node.size + hidden) or 1
 
-        def walk(n, depth, a0, a1, color):
-            if depth > self.DEPTH:
+        def walk(n, depth, a0, a1):
+            if depth > self.DEPTH or n.size <= 0:
                 return
             span = a1 - a0
             cur = a0
             small = 0
-            for i, ch in enumerate(n.children):
-                ext = span * ch.size / (n.size or 1)
+            items = sorted(n.children + n.top_files, key=lambda c: c.size, reverse=True)
+            for ch in items:
+                ext = span * ch.size / n.size
                 if ext < self.MIN_DEG:
                     small += ch.size
                     continue
-                col = PALETTE[i % len(PALETTE)] if depth == 1 else _mix(color, self.bgc, 0.16)
-                self._seg(cx, cy, r0, ring, depth, cur, cur + ext, ch, col, ch.name)
-                walk(ch, depth + 1, cur, cur + ext, col)
+                col = seg_color(cur + ext / 2, depth, ch.is_file)
+                self.segs.append([depth, cur, cur + ext, ch, col, ch.name, ch.size, "file" if ch.is_file else "dir"])
+                if not ch.is_file:
+                    walk(ch, depth + 1, cur, cur + ext)
                 cur += ext
-            rest = n.own_files
-            ext = span * rest / (n.size or 1)
-            if ext >= self.MIN_DEG:
-                self._seg(cx, cy, r0, ring, depth, cur, cur + ext, None, _mix(FILES_COLOR, self.bgc, 0.12 * depth),
-                          f"{n.files - sum(c.files for c in n.children)} archivos sueltos · {human(rest)}")
-                cur += ext
-            ext = span * small / (n.size or 1)
-            if ext >= 0.3:
-                self._seg(cx, cy, r0, ring, depth, cur, cur + ext, None, SMALL_COLOR,
-                          f"Elementos pequeños · {human(small)}")
+            rest = core.loose_bytes(n) + small
+            ext = span * rest / n.size
+            if ext >= 0.35:
+                self.segs.append([depth, cur, cur + ext, None, _mix(SMALL_COLOR, self.bgc, 0.1 * depth),
+                                  "Archivos pequeños", rest, "small"])
 
-        walk(node, 1, 0.0, 360.0 * min(1.0, node.size / total), C["accent"])
-        # centro
-        self.center = self.create_oval(cx - r0 + 4, cy - r0 + 4, cx + r0 - 4, cy + r0 - 4, fill=C["surface2"],
-                                       outline=C["border"], width=1)
-        self.c_title = self.create_text(cx, cy - 14, text=self._short(node.name, r0), fill=C["text"],
-                                        font=(UI_FONT, 12, "bold"))
-        self.c_size = self.create_text(cx, cy + 8, text=human(node.size), fill=C["text"], font=(UI_FONT, 17, "bold"))
-        self.c_hint = self.create_text(cx, cy + 30, text="↑ subir" if self.history else f"{node.files:,} archivos"
-                                       .replace(",", "."), fill=C["muted"], font=(UI_FONT, 9))
+        walk(node, 1, 0.0, 360.0 * node.size / total)
+        if hidden:
+            self.segs.append([1, 360.0 * node.size / total, 360.0, None, HIDDEN_COLOR, "Espacio oculto", hidden,
+                              "hidden"])
+
+    # -- dibujo --
+    def _schedule(self):
+        if self._spin is not None:
+            return
+        if self._job:
+            self.after_cancel(self._job)
+        self._job = self.after(60, lambda: self.redraw(animate=False))
+
+    def redraw(self, animate=False):
+        if self._spin is not None:
+            return
+        if self._anim:
+            self.after_cancel(self._anim)
+            self._anim = None
+        if animate and Image is not None and self.segs:
+            self._animate(0)
+        else:
+            self._paint(1.0)
+
+    def _animate(self, i, n=11):
+        t = i / n
+        e = 1 - (1 - t) ** 3  # ease-out
+        self._paint(e, fast=i < n)
+        if i < n:
+            self._anim = self.after(16, lambda: self._animate(i + 1, n))
+        else:
+            self._anim = None
+
+    def _paint(self, t=1.0, fast=False):
+        self.delete("all")
+        node = self.root_node
+        cx, cy, rad = self.geometry_()
+        if node is None:
+            self.create_text(cx, cy - 10, text="Elige un disco o una carpeta", fill=C["text"],
+                             font=(UI_FONT, 15, "bold"))
+            self.create_text(cx, cy + 16, text="y pulsa «Analizar» para ver su mapa", fill=C["muted"],
+                             font=(UI_FONT, 11))
+            return
+        w, h = max(self.winfo_width(), 50), max(self.winfo_height(), 50)
+        grow = 0.86 + 0.14 * t
+        if Image is not None:
+            ss = 1 if fast else self.SS
+            img = Image.new("RGB", (w * ss, h * ss), self.bgc)
+            d = ImageDraw.Draw(img)
+            for seg in self.segs:
+                depth, a0, a1, _n, col = seg[:5]
+                a0, a1 = a0 * t, a1 * t
+                if a1 - a0 < 0.05:
+                    continue
+                self._poly(d, seg, cx, cy, rad, ss, col, a0, a1, grow)
+            r0 = rad[0] * grow - 3
+            d.ellipse((ss * (cx - r0), ss * (cy - r0), ss * (cx + r0), ss * (cy + r0)), fill=C["surface2"],
+                      outline=C["border"], width=ss)
+            if ss > 1:
+                self._hires = img
+                img = img.resize((w, h), Image.LANCZOS)
+            self._base = img if not fast else None
+            self._img_item = self.create_image(0, 0, anchor="nw")
+            self._show_img(img)
+            if not fast and self.hover_seg not in (None, "center"):
+                self._paint_hover()
+        else:
+            for seg in self.segs:
+                depth, a0, a1, _n, col = seg[:5]
+                r1, r2 = rad[depth - 1] + 1.4, rad[depth] - 1.4
+                pts = [c for p in _arc_pts(cx, cy, r2, a0, a1) + list(reversed(_arc_pts(cx, cy, r1, a0, a1)))
+                       for c in p]
+                seg.append(self.create_polygon(pts, fill=col, outline=self.bgc))
+            r0 = rad[0] - 3
+            self.create_oval(cx - r0, cy - r0, cx + r0, cy + r0, fill=C["surface2"], outline=C["border"])
+        self.c_title = self.create_text(cx, cy - 18, fill=C["muted"], font=(UI_FONT, 11, "bold"))
+        self.c_size = self.create_text(cx, cy + 4, fill=C["text"], font=(UI_FONT, 19, "bold"))
+        self.c_hint = self.create_text(cx, cy + 28, fill=C["faint"], font=(UI_FONT, 9))
+        self._refresh_center()
+
+    def _poly(self, d, seg, cx, cy, rad, ss, col, a0, a1, grow=1.0, ox=0, oy=0):
+        depth = seg[0]
+        r1 = (rad[depth - 1] + 1.4) * grow
+        r2 = (rad[depth] - 1.4) * grow
+        pts = _arc_pts(cx * ss - ox, cy * ss - oy, r2 * ss, a0, a1) + \
+            list(reversed(_arc_pts(cx * ss - ox, cy * ss - oy, r1 * ss, a0, a1)))
+        d.polygon(pts, fill=col, outline=self.bgc, width=max(1, ss))
+        return pts
+
+    def _show_img(self, img):
+        self._photo = ImageTk.PhotoImage(img)
+        self.itemconfigure(self._img_item, image=self._photo)
+
+    def _paint_hover(self):
+        """Resalta el segmento bajo el ratón redibujando solo su recuadro (rápido)."""
+        base = getattr(self, "_base", None)
+        if base is None or self.SS < 1:
+            return
+        seg = self.hover_seg
+        if seg in (None, "center"):
+            self._show_img(base)
+            return
+        ss = self.SS
+        cx, cy, rad = self.geometry_()
+        pts = _arc_pts(cx * ss, cy * ss, rad[seg[0]] * ss, seg[1], seg[2]) + \
+            _arc_pts(cx * ss, cy * ss, rad[seg[0] - 1] * ss, seg[1], seg[2])
+        xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+        x0 = max(0, int(min(xs) / ss) - 2) * ss
+        y0 = max(0, int(min(ys) / ss) - 2) * ss
+        x1 = min(base.width, int(max(xs) / ss) + 3) * ss
+        y1 = min(base.height, int(max(ys) / ss) + 3) * ss
+        crop = self._hires.crop((x0, y0, x1, y1))
+        dd = ImageDraw.Draw(crop)
+        self._poly(dd, seg, cx, cy, rad, ss, _mix(seg[4], "#ffffff", 0.38), seg[1], seg[2], ox=x0, oy=y0)
+        small = crop.resize(((x1 - x0) // ss, (y1 - y0) // ss), Image.LANCZOS)
+        img = base.copy()
+        img.paste(small, (x0 // ss, y0 // ss))
+        self._show_img(img)
 
     def _short(self, name, r0):
-        maxc = max(8, int(r0 / 5))
+        maxc = max(8, int(r0 / 5.5))
         return name if len(name) <= maxc else name[:maxc - 1] + "…"
 
-    def _seg(self, cx, cy, r0, ring, depth, a0, a1, node, color, label):
-        r1 = r0 + (depth - 1) * ring + 1.5
-        r2 = r0 + depth * ring - 1.5
-        if a1 - a0 >= 359.99:
-            a1 = a0 + 359.9
-        item = self.create_polygon(self._sector(cx, cy, r1, r2, a0, a1), fill=color, outline=self.bgc, width=1.2,
-                                   smooth=False)
-        self.segs.append((depth, a0, a1, node, item, color, label))
+    def _refresh_center(self):
+        if not hasattr(self, "c_title") or self.root_node is None:
+            return
+        seg = self.hover_seg
+        n = self.root_node
+        if seg and seg != "center":
+            size = seg[6]
+            base = (n.size + (self.hidden if n is self.base_root else 0)) or 1
+            sub = f"{size / base * 100:.1f} %"
+            if seg[7] == "dir":
+                sub += f" · {seg[3].files:,} archivos".replace(",", ".")
+            elif seg[7] == "hidden":
+                sub = "sistema, sin permisos, instantáneas…"
+            self._center_text(seg[5], human(size), sub)
+        else:
+            self._center_text(n.name, human(n.size), "↑ subir" if self.history else
+                              f"{n.files:,} archivos".replace(",", "."))
+
+    def _center_text(self, t, s, h):
+        _cx, _cy, rad = self.geometry_()
+        try:
+            self.itemconfigure(self.c_title, text=self._short(t, rad[0]))
+            self.itemconfigure(self.c_size, text=s)
+            self.itemconfigure(self.c_hint, text=h)
+        except tk.TclError:
+            pass
 
     # -- interacción --
     def _hit(self, x, y):
-        import math
-        cx, cy, r0, ring = self.geometry_()
+        cx, cy, rad = self.geometry_()
         dx, dy = x - cx, y - cy
         r = math.hypot(dx, dy)
-        if r < r0:
+        if r < rad[0]:
             return "center"
-        depth = int((r - r0) / ring) + 1
+        depth = next((i for i in range(1, len(rad)) if r < rad[i]), None)
+        if depth is None:
+            return None
         ang = (math.degrees(math.atan2(dy, dx)) + 90) % 360
         for seg in self.segs:
             if seg[0] == depth and seg[1] <= ang < seg[2]:
@@ -573,51 +848,73 @@ class Sunburst(tk.Canvas):
         return None
 
     def _set_hover(self, seg):
-        if self.hover_item is not None:
-            item, color = self.hover_item
-            self.itemconfigure(item, fill=color)
-            self.hover_item = None
-        if seg and seg != "center":
-            self.itemconfigure(seg[4], fill=_mix(seg[5], "#ffffff", 0.28))
-            self.hover_item = (seg[4], seg[5])
-            node = seg[3]
-            if node is not None:
-                pct = node.size / self.root_node.size * 100 if self.root_node.size else 0
-                self._center_text(node.name, human(node.size), f"{pct:.1f} % · {node.files:,} archivos".replace(",", "."))
-            else:
-                self._center_text("", seg[6].split(" · ")[-1], seg[6].split(" · ")[0])
-            self.configure(cursor="hand2" if node is not None and node.children else "arrow")
+        if self._spin is not None or self._anim is not None:
+            return
+        prev = self.hover_seg
+        self.hover_seg = seg
+        if Image is not None:
+            if (prev not in (None, "center")) or (seg not in (None, "center")):
+                self._paint_hover()
+            self._refresh_center()
         else:
-            if self.root_node is not None and hasattr(self, "c_title"):
-                n = self.root_node
-                self._center_text(n.name, human(n.size), "↑ subir" if self.history else
-                                  f"{n.files:,} archivos".replace(",", "."))
-            self.configure(cursor="hand2" if seg == "center" and self.history else "arrow")
+            if prev not in (None, "center") and len(prev) > 8:
+                self.itemconfigure(prev[8], fill=prev[4])
+            if seg not in (None, "center") and len(seg) > 8:
+                self.itemconfigure(seg[8], fill=_mix(seg[4], "#ffffff", 0.35))
+            self._refresh_center()
+        node = seg[3] if seg not in (None, "center") else None
+        if seg == "center":
+            self.configure(cursor="hand2" if self.history else "arrow")
+        else:
+            self.configure(cursor="hand2" if node is not None else "arrow")
         if self.on_hover:
-            self.on_hover(seg[3] if seg and seg != "center" else None)
-
-    def _center_text(self, t, s, h):
-        _cx, _cy, r0, _ring = self.geometry_()
-        self.itemconfigure(self.c_title, text=self._short(t, r0))
-        self.itemconfigure(self.c_size, text=s)
-        self.itemconfigure(self.c_hint, text=h)
+            self.on_hover(node)
 
     def _motion(self, e):
-        if self.root_node is None:
+        if self.root_node is None or self._dragging:
             return
         seg = self._hit(e.x, e.y)
-        cur = self.hover_item[0] if self.hover_item else None
-        if seg == "center" or seg is None or seg[4] != cur:
+        if seg is not self.hover_seg:
             self._set_hover(seg)
 
-    def _click(self, e):
-        if self.root_node is None:
+    def _b1_down(self, e):
+        self._press = (e.x, e.y)
+        self._dragging = False
+
+    def _b1_move(self, e):
+        if not self._press or self.root_node is None:
+            return
+        if not self._dragging:
+            if abs(e.x - self._press[0]) + abs(e.y - self._press[1]) < 8:
+                return
+            seg = self._hit(*self._press)
+            if seg in (None, "center") or seg[3] is None or not self.on_drag:
+                return
+            self._dragging = True
+            self._drag_node = seg[3]
+            self.on_drag("start", [seg[3]], e)
+        else:
+            self.on_drag("move", None, e)
+
+    def _b1_up(self, e):
+        if self._dragging:
+            self._dragging = False
+            self._press = None
+            self.on_drag("drop", None, e)
+            return
+        self._press = None
+        if self.root_node is None or self._spin is not None:
             return
         seg = self._hit(e.x, e.y)
         if seg == "center":
             self.up()
-        elif seg and seg[3] is not None and seg[3].children:
-            self.set_root(seg[3])
+        elif seg and seg[3] is not None:
+            if seg[3].is_file:
+                if self.on_file:
+                    self.on_file(seg[3])
+            elif seg[3].children or seg[3].top_files:
+                self.hover_seg = None
+                self.set_root(seg[3])
 
     def _right(self, e):
         seg = self._hit(e.x, e.y)
@@ -670,8 +967,8 @@ class App(ctk.CTk):
         side.pack_propagate(False)
         logo = ctk.CTkFrame(side, fg_color="transparent")
         logo.pack(fill="x", padx=20, pady=(26, 28))
-        ctk.CTkLabel(logo, text=icon("drive"), font=IF(18), width=40, height=40, corner_radius=12,
-                     fg_color=C["accent"], text_color="#ffffff").pack(side="left")
+        Ring(logo, size=40, thickness=7, bg=C["side"]).draw(0.72, "", "")
+        logo.winfo_children()[-1].pack(side="left")
         lt = ctk.CTkFrame(logo, fg_color="transparent")
         lt.pack(side="left", padx=12)
         ctk.CTkLabel(lt, text="PC Free Space", font=F(15, "bold"), text_color=C["text"]).pack(anchor="w")
@@ -708,7 +1005,8 @@ class App(ctk.CTk):
             btn(adm, "Reiniciar como admin", self._relaunch_admin, "secondary").pack(fill="x", padx=12, pady=(0, 12))
 
         # Colector
-        col = ctk.CTkFrame(side, fg_color=C["surface"], corner_radius=12, border_width=1, border_color=C["accent_soft"])
+        col = ctk.CTkFrame(side, fg_color=C["surface"], corner_radius=14, border_width=2, border_color=C["accent_soft"])
+        self.col_frame = col
         col.pack(side="bottom", fill="x", padx=14, pady=(8, 0))
         ch = ctk.CTkFrame(col, fg_color="transparent")
         ch.pack(fill="x", padx=14, pady=(12, 0))
@@ -800,7 +1098,7 @@ class App(ctk.CTk):
                            ) is True
 
     # ---------- tareas en segundo plano ----------
-    def run_task(self, label, fn, done=None):
+    def run_task(self, label, fn, done=None, on_error=None):
         if self.busy:
             self.alert("Espera a que termine la tarea actual o cancélala.", "Tarea en curso")
             return
@@ -818,10 +1116,10 @@ class App(ctk.CTk):
 
         def worker():
             try:
-                self.q.put(("done", (done, fn(report), None)))
+                self.q.put(("done", (done, fn(report), None, on_error)))
             except Exception as e:  # noqa: BLE001
                 traceback.print_exc()
-                self.q.put(("done", (done, None, e)))
+                self.q.put(("done", (done, None, e, on_error)))
         threading.Thread(target=worker, daemon=True).start()
 
     def _poll(self):
@@ -831,8 +1129,10 @@ class App(ctk.CTk):
                 kind, payload = self.q.get_nowait()
                 if kind == "status":
                     last_status = payload
+                elif kind == "scan":
+                    self.sun.scan_text = payload
                 elif kind == "done":
-                    done, res, err = payload
+                    done, res, err, on_error = payload
                     last_status = None
                     self.busy = False
                     self.progress.stop()
@@ -841,6 +1141,8 @@ class App(ctk.CTk):
                     self.progress.grid_remove()
                     self.cancel_btn.grid_remove()
                     if err:
+                        if on_error:
+                            on_error()
                         self.dot.configure(text_color=C["bad"])
                         self.set_status(f"Error: {err}")
                         self.alert(f"Ha ocurrido un error:\n{err}", "Error", "error")
@@ -886,26 +1188,35 @@ class App(ctk.CTk):
     def _build_summary(self, page):
         actions = self.page_header(page, "Discos", "Estado de tus discos y por dónde empezar a liberar espacio")
         btn(actions, "Actualizar", self.refresh_summary, "secondary", width=110).pack(side="right")
-        self.sum_body = ctk.CTkScrollableFrame(page, fg_color="transparent", scrollbar_button_color=C["hover"],
-                                               scrollbar_button_hover_color="#2e3546")
+        self.sum_body = ctk.CTkScrollableFrame(page, fg_color="transparent", scrollbar_button_color=C["scroll"],
+                                               scrollbar_button_hover_color=C["scroll_h"])
         self.sum_body.pack(fill="both", expand=True)
         self.sum_body.grid_columnconfigure((0, 1, 2), weight=1, uniform="c")
 
-    def _tile(self, parent, col, title, value, sub, action=None, kind="secondary", row=1):
+    def _tile(self, parent, col, title, value, sub, action=None, kind="secondary", row=1, dot=None):
         t = card(parent)
         t.grid(row=row, column=col, sticky="nsew", padx=(0 if col == 0 else 7, 0 if col == 2 else 7), pady=(0, 14))
-        ctk.CTkLabel(t, text=title.upper(), font=F(11, "bold"), text_color=C["faint"]).pack(anchor="w", padx=22,
-                                                                                          pady=(20, 2))
+        hd = ctk.CTkFrame(t, fg_color="transparent")
+        hd.pack(anchor="w", padx=22, pady=(20, 4))
+        ctk.CTkLabel(hd, text="●", font=F(11), text_color=dot or C["accent"], width=12).pack(side="left")
+        ctk.CTkLabel(hd, text=title.upper(), font=F(11, "bold"), text_color=C["faint"]).pack(side="left", padx=6)
         ctk.CTkLabel(t, text=value, font=F(28, "bold"), text_color=C["text"]).pack(anchor="w", padx=22)
         ctk.CTkLabel(t, text=sub, font=F(12), text_color=C["muted"], wraplength=300, justify="left"
                      ).pack(anchor="w", padx=22, pady=(2, 14 if action else 22))
         if action:
             btn(t, action[0], action[1], kind, width=130).pack(anchor="w", padx=22, pady=(0, 20))
 
+    def _bar(self, parent, pct, height=10):
+        b = ctk.CTkProgressBar(parent, height=height, corner_radius=height // 2, fg_color=C["track"],
+                               progress_color=level_color(pct) if pct >= 0.75 else C["accent"])
+        b.set(max(0.0, min(pct, 1.0)))
+        return b
+
     def refresh_summary(self):
         body = self.sum_body
         for w in body.winfo_children():
             w.destroy()
+        self._drive_rows = []
         drives = core.list_drives()
         if core.IS_WIN:
             sysdrive = next((d for d in drives if d.path.upper().startswith(core.SYSDRIVE[:2].upper())), None)
@@ -916,73 +1227,75 @@ class App(ctk.CTk):
             hero = card(body)
             hero.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 14))
             hero.grid_columnconfigure(1, weight=1)
-            ring = Ring(hero, size=180, thickness=16)
-            ring.grid(row=0, column=0, rowspan=3, padx=(30, 34), pady=26)
+            ring = Ring(hero, size=196, thickness=18)
+            ring.grid(row=0, column=0, rowspan=4, padx=(30, 36), pady=28)
             ring.draw(sysdrive.pct, f"{sysdrive.pct * 100:.0f}%", "en uso")
             ctk.CTkLabel(hero, text=f"DISCO DEL SISTEMA  ·  {sysdrive.path}", font=F(11, "bold"),
-                         text_color=C["faint"]).grid(row=0, column=1, sticky="sw", pady=(34, 0))
-            ctk.CTkLabel(hero, text=f"{human(sysdrive.free)} libres", font=F(38, "bold"), text_color=C["text"]
-                         ).grid(row=1, column=1, sticky="w")
-            info = ctk.CTkFrame(hero, fg_color="transparent")
-            info.grid(row=2, column=1, sticky="nw", pady=(6, 26))
-            for label, val in (("Usado", human(sysdrive.used)), ("Capacidad", human(sysdrive.total))):
-                f = ctk.CTkFrame(info, fg_color=C["surface2"], corner_radius=10)
-                f.pack(side="left", padx=(0, 10))
-                ctk.CTkLabel(f, text=label, font=F(11), text_color=C["faint"]).pack(anchor="w", padx=16, pady=(8, 0))
-                ctk.CTkLabel(f, text=val, font=F(15, "bold"), text_color=C["text"]).pack(anchor="w", padx=16,
-                                                                                        pady=(0, 8))
+                         text_color=C["faint"]).grid(row=0, column=1, sticky="sw", pady=(36, 0))
+            big = ctk.CTkLabel(hero, text=f"{human(sysdrive.free)} libres", font=F(40, "bold"), text_color=C["text"])
+            big.grid(row=1, column=1, sticky="w")
+            bar = self._bar(hero, sysdrive.pct, 10)
+            bar.grid(row=2, column=1, sticky="ew", pady=(10, 8))
+            info = ctk.CTkLabel(hero, text="", font=F(12), text_color=C["muted"])
+            info.grid(row=3, column=1, sticky="nw", pady=(0, 30))
             acts = ctk.CTkFrame(hero, fg_color="transparent")
-            acts.grid(row=0, column=2, rowspan=3, padx=30)
-            btn(acts, "Buscar qué borrar", lambda: (self.show("clean"), self.scan_categories()), "primary",
+            acts.grid(row=0, column=2, rowspan=4, padx=30)
+            btn(acts, "Analizar el disco", lambda p=sysdrive.path: self.start_scan(p), "primary",
                 width=200).pack(pady=5)
-            btn(acts, "Analizar el disco", lambda p=sysdrive.path: self.start_scan(p), "secondary",
+            btn(acts, "Buscar qué borrar", lambda: (self.show("clean"), self.scan_categories()), "secondary",
                 width=200).pack(pady=5)
+            self._drive_rows.append((sysdrive.path, ring, big, bar, info, True))
 
         size, n = core.recycle_bin_size()
-        self._tile(body, 0, "Papelera de reciclaje" if core.IS_WIN else "Papelera", human(size), f"{n} elementos · ocupan espacio hasta vaciarla",
-                   ("Vaciar", self._empty_bin) if size else None, "danger")
+        self._tile(body, 0, "Papelera de reciclaje" if core.IS_WIN else "Papelera", human(size),
+                   f"{n} elementos · ocupan espacio hasta vaciarla", ("Vaciar", self._empty_bin) if size else None,
+                   "danger", dot=C["bad"])
         scanned = [c for c in self.categories if getattr(c, "_scanned", False)]
         if scanned:
             safe = sum(c.size for c in scanned if c.risk == core.SAFE)
             rev = sum(c.size for c in scanned if c.risk == core.REVIEW)
             self._tile(body, 1, "Recuperable", human(safe + rev), f"{human(safe)} seguro · {human(rev)} a revisar",
-                       ("Ir a Limpieza", lambda: self.show("clean")))
+                       ("Ir a Limpieza", lambda: self.show("clean")), dot=C["ok"])
         else:
             self._tile(body, 1, "Recuperable", "—", "Temporales, cachés y modelos de IA sin calcular",
-                       ("Calcular", lambda: (self.show("clean"), self.scan_categories())))
+                       ("Calcular", lambda: (self.show("clean"), self.scan_categories())), dot=C["ok"])
         sysfiles = core.system_files_info()
-        self._tile(body, 2, "Archivos del sistema", human(sum(x[2] for x in sysfiles)) if sysfiles else "—",
-                   " · ".join(f"{os.path.basename(p)} {human(s)}" for _l, p, s, _t in sysfiles) or
-                   "Hibernación y memoria virtual")
+        snaps = core.local_snapshots()
+        sub = " · ".join(f"{os.path.basename(p)} {human(s)}" for _l, p, s, _t in sysfiles) or \
+            "Hibernación y memoria virtual"
+        if snaps:
+            sub += f" · {len(snaps)} instantáneas locales de Time Machine"
+        self._tile(body, 2, "Archivos del sistema", human(sum(x[2] for x in sysfiles)) if sysfiles else "—", sub,
+                   dot=C["accent2"])
         row = 2
         others = [d for d in drives if d is not sysdrive]
         if others:
             ctk.CTkLabel(body, text="Otros discos", font=F(15, "bold"), text_color=C["text"]
                          ).grid(row=row, column=0, sticky="w", pady=(6, 10))
             row += 1
-            for i, d in enumerate(others):
-                if i and i % 3 == 0:
-                    row += 1
-                col = i % 3
+            for d in others:
                 dc = card(body)
-                dc.grid(row=row, column=col, sticky="nsew", padx=(0 if col == 0 else 7, 0 if col == 2 else 7),
-                        pady=(0, 14))
+                dc.grid(row=row, column=0, columnspan=3, sticky="ew", pady=(0, 10))
                 dc.grid_columnconfigure(1, weight=1)
-                ring = Ring(dc, size=92, thickness=9)
-                ring.grid(row=0, column=0, rowspan=3, padx=(18, 14), pady=16)
+                ring = Ring(dc, size=64, thickness=8)
+                ring.grid(row=0, column=0, rowspan=2, padx=(18, 18), pady=14)
                 ring.draw(d.pct, f"{d.pct * 100:.0f}%", "")
-                name = d.path if len(d.path) < 22 else "…" + d.path[-20:]
-                ctk.CTkLabel(dc, text=name, font=F(14, "bold"), text_color=C["text"], anchor="w"
-                             ).grid(row=0, column=1, sticky="sw", pady=(18, 0))
-                ctk.CTkLabel(dc, text=f"{human(d.free)} libres de {human(d.total)}", font=F(12),
-                             text_color=C["muted"], anchor="w").grid(row=1, column=1, sticky="w")
-                btn(dc, "Analizar", lambda p=d.path: self.start_scan(p), "secondary", width=90
-                    ).grid(row=2, column=1, sticky="nw", pady=(6, 16))
-            row += 1
+                name = d.path if len(d.path) < 40 else "…" + d.path[-38:]
+                top = ctk.CTkFrame(dc, fg_color="transparent")
+                top.grid(row=0, column=1, sticky="sew", pady=(16, 6))
+                ctk.CTkLabel(top, text=name, font=F(14, "bold"), text_color=C["text"]).pack(side="left")
+                info = ctk.CTkLabel(top, text="", font=F(12), text_color=C["muted"])
+                info.pack(side="right")
+                bar = self._bar(dc, d.pct, 8)
+                bar.grid(row=1, column=1, sticky="new", pady=(0, 16))
+                btn(dc, "Analizar", lambda p=d.path: self.start_scan(p), "secondary", width=100
+                    ).grid(row=0, column=2, rowspan=2, padx=18)
+                self._drive_rows.append((d.path, ring, None, bar, info, False))
+                row += 1
         tools = core.system_tools()
         if tools:
             ctk.CTkLabel(body, text=f"Herramientas de {core.OS_NAME}", font=F(15, "bold"), text_color=C["text"]
-                         ).grid(row=row, column=0, sticky="w", pady=(6, 10))
+                         ).grid(row=row, column=0, sticky="w", pady=(10, 10))
             row += 1
         for i, (t1, t2, target) in enumerate(tools):
             t = card(body)
@@ -992,10 +1305,42 @@ class App(ctk.CTk):
             btn(t, "Abrir  ↗", lambda x=target: self._launch(x), "ghost", width=80).pack(anchor="w", padx=12,
                                                                                          pady=(6, 14))
         tips = [tip for _l, _p, _s, tip in sysfiles if "powercfg" in tip or "pmset" in tip]
+        if snaps:
+            tips.append("macOS borra las instantáneas locales solo cuando falta espacio. Para quitarlas ya: "
+                        "tmutil deletelocalsnapshots /")
         if tips:
             row += 1
             ctk.CTkLabel(body, text="Consejo: " + tips[0], font=F(12), text_color=C["faint"]
                          ).grid(row=row, column=0, columnspan=3, sticky="w", pady=(14, 0))
+        self._live_drives(schedule_only=True)
+
+    def _live_drives(self, schedule_only=False):
+        """Actualiza en tiempo real el espacio libre de los discos, sin volver a dibujar la pantalla."""
+        if getattr(self, "_live_job", None):
+            self.after_cancel(self._live_job)
+        if not schedule_only:
+            for path, ring, big, bar, info, is_sys in list(getattr(self, "_drive_rows", [])):
+                try:
+                    u = shutil.disk_usage(path)
+                    pct = u.used / u.total if u.total else 0
+                    if not ring.winfo_exists():
+                        continue
+                    if abs(pct - getattr(ring, "_pct", -1)) > 0.0005:
+                        ring.draw(pct, f"{pct * 100:.0f}%", "en uso" if is_sys else "")
+                        ring._pct = pct
+                    bar.set(pct)
+                    bar.configure(progress_color=level_color(pct) if pct >= 0.75 else C["accent"])
+                    if big is not None:
+                        big.configure(text=f"{human(u.free)} libres")
+                        info.configure(text=f"Usado {human(u.used)}  ·  Capacidad {human(u.total)}")
+                    else:
+                        info.configure(text=f"{human(u.free)} libres de {human(u.total)}")
+                except (OSError, tk.TclError):
+                    pass
+        else:
+            self.after(10, lambda: self._live_drives())
+            return
+        self._live_job = self.after(4000, self._live_drives)
 
     def _empty_bin(self):
         size, n = core.recycle_bin_size()
@@ -1211,9 +1556,12 @@ class App(ctk.CTk):
         mcard.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         self.crumbs = ctk.CTkFrame(mcard, fg_color="transparent", height=36)
         self.crumbs.pack(fill="x", padx=14, pady=(12, 0))
-        self.sun = Sunburst(mcard, on_hover=self._map_hover, on_navigate=self._map_nav, on_context=self._map_menu)
+        self.sun = Sunburst(mcard, on_hover=self._map_hover, on_navigate=self._map_nav, on_context=self._map_menu,
+                            on_file=self.preview, on_drag=self._sun_drag)
         self.sun.pack(fill="both", expand=True, padx=10, pady=10)
-        self.map_hover = ctk.CTkLabel(mcard, text="", font=F(12), text_color=C["muted"], anchor="w")
+        self.map_hover = ctk.CTkLabel(mcard, text="Clic en un anillo para entrar · clic en el centro para subir · "
+                                                  "arrastra al Colector", font=F(12), text_color=C["faint"],
+                                      anchor="w")
         self.map_hover.pack(fill="x", padx=16, pady=(0, 12))
 
         side = ctk.CTkFrame(body, fg_color="transparent")
@@ -1223,20 +1571,24 @@ class App(ctk.CTk):
         self.map_title = ctk.CTkLabel(hdr, text="Contenido", font=F(15, "bold"), text_color=C["text"], anchor="w")
         self.map_title.pack(side="left")
         btn(hdr, "↑ Subir", lambda: self.sun.up(), "ghost", width=80).pack(side="right")
-        self.map_list = Table(side, [("name", "NOMBRE", 220, "w"), ("bar", "", 110, "w"), ("size", "TAMAÑO", 90, "e")],
+        self.map_list = Table(side, [("name", "NOMBRE", 220, "w"), ("bar", "", 150, "w"), ("size", "TAMAÑO", 90, "e")],
                               height=14, on_open=self._map_open_row,
                               empty_text="Analiza un disco o una carpeta para ver su mapa")
         self.map_list.pack(fill="both", expand=True)
-        self.map_list.context_menu([("Entrar", lambda: self._map_open_row(self.map_list.focused())),
+        self.map_list.context_menu([("Entrar / abrir", lambda: self._map_open_row(self.map_list.focused())),
+                                    ("Vista previa   (Espacio)", lambda: self.preview(self.map_list.focused())),
                                     ("Añadir al Colector", lambda: self._collect_nodes(self.map_list.selected())),
                                     ("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(self.map_list.focused())),
                                     ("Copiar ruta", lambda: self._copy_path(self.map_list.focused())), ("-", None),
                                     ("Borrar…", lambda: self._delete_nodes(self.map_list.selected()))])
+        self.map_list.tv.bind("<space>", lambda e: (self.preview(self.map_list.focused()), "break")[1])
+        self.map_list.tv.bind("<BackSpace>", lambda e: self.sun.up())
+        self.map_list.enable_drag(self._table_drag)
         acts = ctk.CTkFrame(side, fg_color="transparent")
         acts.pack(fill="x", pady=(10, 0))
         btn(acts, "Añadir al Colector", lambda: self._collect_nodes(self.map_list.selected()), "primary"
             ).pack(side="left")
-        btn(acts, "Mostrar", lambda: self._open_node(self.map_list.focused()), "secondary", width=90
+        btn(acts, "Vista previa", lambda: self.preview(self.map_list.focused()), "secondary", width=110
             ).pack(side="left", padx=8)
         btn(acts, "Exportar CSV", self._export_csv, "ghost", width=110).pack(side="right")
 
@@ -1253,25 +1605,45 @@ class App(ctk.CTk):
         if not os.path.isdir(path):
             self.alert(f"No existe la carpeta:\n{path}", "Carpeta no encontrada", "error")
             return
+        if self.busy:
+            self.alert("Espera a que termine la tarea actual o cancélala.", "Tarea en curso")
+            return
         self.scan_path.delete(0, "end")
         self.scan_path.insert(0, path)
         self.show("analyzer")
+        self.sun.start_scanning("Preparando…")
 
         def work(report):
-            return core.scan_tree(path, self.cancel,
-                                  lambda n, b, p: report(f"Analizando · {n:,} archivos · {human(b)} · {p}"))
+            def prog(n, b, p):
+                self.q.put(("scan", f"{n:,} archivos · {human(b)}".replace(",", ".")))
+                report(f"Analizando · {n:,} archivos · {human(b)} · {p}")
+            return core.scan_tree(path, self.cancel, prog)
 
-        def done(res: core.ScanResult):
+        def done(res: core.ScanResult | None):
+            self.sun.stop_scanning()
+            if res is None:
+                self.sun.redraw()
+                return
             self.scan_result = res
-            self.sun.reset(res.root)
+            hidden = 0
+            drive = next((d for d in core.list_drives() if core.norm(d.path) == core.norm(path)), None)
+            if drive and not self.cancel.is_set():
+                hidden = max(0, drive.used - res.root.size)
+                if hidden < drive.used * 0.01:
+                    hidden = 0
+            self.scan_hidden = hidden
+            self.sun.reset(res.root, hidden)
             self._fill_bigfiles()
             self._fill_model_files()
             self._fill_kinds()
             self.dup_table.clear()
             r = res.root
             txt = f"{human(r.size)} en {r.files:,} archivos".replace(",", ".")
+            if hidden:
+                txt += f"  ·  {human(hidden)} ocultos"
             self.scan_info.configure(text=txt + (" (parcial)" if self.cancel.is_set() else ""))
-        self.run_task(f"Analizando {path}…", work, done)
+        self.run_task(f"Analizando {path}…", work, done, on_error=lambda: (self.sun.stop_scanning(),
+                                                                            self.sun.redraw()))
 
     def _map_nav(self, node):
         # migas de pan
@@ -1296,38 +1668,47 @@ class App(ctk.CTk):
         # lista
         t = self.map_list
         t.clear()
+        hidden = self.sun.hidden if node is self.sun.base_root else 0
         self.map_title.configure(text=f"{node.name}  ·  {human(node.size)}")
-        total = node.size or 1
-        rows = [(c.size, c.name, c) for c in node.children[:500]]
-        if node.own_files:
-            rows.append((node.own_files, "(archivos sueltos)", None))
+        total = (node.size + hidden) or 1
+        rows = [(c.size, c.name, c) for c in node.children[:500]] + [(f.size, f.name, f) for f in node.top_files]
+        loose = core.loose_bytes(node)
+        if loose:
+            rows.append((loose, "(archivos pequeños)", None))
+        if hidden:
+            rows.append((hidden, "(espacio oculto: sistema, sin permisos…)", "hidden"))
         rows.sort(key=lambda r: r[0], reverse=True)
-        for i, (size, name, obj) in enumerate(rows):
+        for size, name, obj in rows:
             frac = size / total
-            blocks = int(round(frac * 12))
-            bar = "▰" * blocks + "▱" * (12 - blocks)
-            t.add(obj.path if obj else node.path + "<files>", [("▸  " if obj and obj.children else "    ") + name,
-                  bar + f"  {frac * 100:.0f}%", human(size)], obj=obj, sort={"size": size},
-                  tags=("muted",) if obj is None else ())
+            blocks = int(round(frac * 10))
+            bar = "█" * blocks + "░" * (10 - blocks)
+            is_node = isinstance(obj, core.Node)
+            key = obj.path if is_node else node.path + ("<hidden>" if obj == "hidden" else "<files>")
+            prefix = ("▸  " if obj.children or obj.top_files else "    ") if is_node and not obj.is_file else \
+                "     " if is_node else "    "
+            t.add(key, [prefix + name, bar + f"  {frac * 100:.0f}%", human(size)],
+                  obj=obj if is_node else None, sort={"size": size}, tags=() if is_node else ("muted",))
 
     def _map_hover(self, node):
         if node is not None:
-            self.map_hover.configure(text=node.path)
+            self.map_hover.configure(text=node.path, text_color=C["muted"])
             if self.map_list.tv.exists(node.path):
                 self.map_list.tv.selection_set(node.path)
                 self.map_list.tv.see(node.path)
         else:
-            self.map_hover.configure(text="")
+            self.map_hover.configure(text="Clic en un anillo para entrar · clic en el centro para subir · "
+                                          "arrastra al Colector", text_color=C["faint"])
 
     def _map_open_row(self, node):
-        if isinstance(node, core.Node) and node.children:
+        if isinstance(node, core.Node) and not node.is_file and (node.children or node.top_files):
             self.sun.set_root(node)
         elif isinstance(node, core.Node):
-            core.open_in_explorer(node.path)
+            self.preview(node)
 
     def _map_menu(self, node, e):
         menu = tk.Menu(self, tearoff=0, bg=C["surface2"], fg=C["text"], activebackground=C["accent"],
                        activeforeground="#ffffff", bd=0, relief="flat", font=(UI_FONT, 10))
+        menu.add_command(label="  Vista previa    ", command=lambda: self.preview(node))
         menu.add_command(label="  Añadir al Colector    ", command=lambda: self._collect_nodes([node]))
         menu.add_command(label=f"  Mostrar en el {FILE_MANAGER}    ", command=lambda: core.open_in_explorer(node.path))
         menu.add_command(label="  Copiar ruta    ", command=lambda: self._copy_path(node))
@@ -1353,27 +1734,160 @@ class App(ctk.CTk):
         self._delete_paths_ui([(n.path, n.size) for n in nodes], on_done=self._after_map_delete)
 
     def _after_map_delete(self, paths):
-        if not self.scan_result:
+        if not self.scan_result or not paths:
             return
         gone = {core.norm(p) for p in paths}
-        stack = [self.scan_result.root]
+        order, stack = [], [self.scan_result.root]
         while stack:
             n = stack.pop()
-            before = len(n.children)
+            order.append(n)
             n.children = [c for c in n.children if core.norm(c.path) not in gone]
-            if len(n.children) != before:
-                # recalcular tamaños hacia arriba es costoso: recalculamos todo el árbol una vez
-                pass
+            kept = [f for f in n.top_files if core.norm(f.path) not in gone]
+            if len(kept) != len(n.top_files):
+                removed = [f for f in n.top_files if core.norm(f.path) in gone]
+                n.own_files -= sum(f.size for f in removed)
+                n.top_files = kept
             stack.extend(n.children)
+        for n in reversed(order):
+            n.size = n.own_files + sum(c.size for c in n.children)
+        root = self.sun.root_node
+        if root is not None:
+            self.sun.set_root(root, push=False, animate=False)
 
-        def resize(n):
-            n.size = n.own_files + sum(resize(c) for c in n.children)
-            return n.size
-        import sys as _s
-        _s.setrecursionlimit(max(10000, _s.getrecursionlimit()))
-        resize(self.scan_result.root)
-        self.sun.redraw()
-        self._map_nav(self.sun.root_node)
+    # =====================================================================
+    # Arrastrar al Colector y vista previa
+    # =====================================================================
+    @staticmethod
+    def _as_items(objs):
+        out = []
+        for o in objs:
+            if isinstance(o, core.Node):
+                out.append((o.path, o.size))
+            elif isinstance(o, tuple) and len(o) == 2 and isinstance(o[1], str):
+                out.append((o[1], o[0]))
+        return out
+
+    def _over_collector(self, e):
+        f = self.col_frame
+        x, y = f.winfo_rootx(), f.winfo_rooty()
+        return x <= e.x_root <= x + f.winfo_width() and y <= e.y_root <= y + f.winfo_height()
+
+    def _drag(self, phase, items, e):
+        if phase == "start":
+            if not items:
+                return
+            self._drag_items = items
+            g = tk.Toplevel(self)
+            g.overrideredirect(True)
+            try:
+                g.attributes("-topmost", True)
+                g.attributes("-alpha", 0.94)
+            except tk.TclError:
+                pass
+            g.configure(bg=C["accent"])
+            total = sum(s for _, s in items)
+            name = os.path.basename(items[0][0].rstrip("\\/")) or items[0][0]
+            txt = name if len(items) == 1 else f"{len(items)} elementos"
+            tk.Label(g, text=f"  {txt}  ·  {human(total)}  ", bg=C["accent"], fg="#ffffff",
+                     font=(UI_FONT, 10, "bold"), padx=6, pady=5).pack()
+            self._ghost = g
+            phase = "move"
+        g = getattr(self, "_ghost", None)
+        if g is None:
+            return
+        over = self._over_collector(e)
+        if phase == "move":
+            g.geometry(f"+{e.x_root + 14}+{e.y_root + 10}")
+            self.col_frame.configure(border_color=C["accent"] if over else C["accent_soft"],
+                                     fg_color=C["accent_soft"] if over else C["surface"])
+        elif phase == "drop":
+            g.destroy()
+            self._ghost = None
+            self.col_frame.configure(border_color=C["accent_soft"], fg_color=C["surface"])
+            if over:
+                self._collect(self._drag_items)
+
+    def _sun_drag(self, phase, nodes, e):
+        self._drag(phase, self._as_items(nodes) if nodes else None, e)
+
+    def _table_drag(self, phase, objs, e):
+        self._drag(phase, self._as_items(objs) if objs else None, e)
+
+    def preview(self, obj):
+        """Vista previa rápida (como pulsar Espacio en el Finder): imagen, texto o resumen de la carpeta."""
+        if obj is None:
+            return
+        if isinstance(obj, core.Node):
+            path, size, node = obj.path, obj.size, obj
+        elif isinstance(obj, tuple) and len(obj) == 2:
+            size, path = obj
+            node = None
+        else:
+            return
+        import time
+        name = os.path.basename(path.rstrip("\\/")) or path
+        try:
+            st = os.stat(path)
+            when = time.strftime("%d/%m/%Y %H:%M", time.localtime(st.st_mtime))
+        except OSError:
+            st, when = None, ""
+        is_dir = os.path.isdir(path)
+        ext = os.path.splitext(path)[1].lower().lstrip(".")
+        kind = "Carpeta" if is_dir else core.kind_of(ext) + (f" · .{ext}" if ext else "")
+        d = Dialog(self, name, width=800, height=600)
+        d.minsize(600, 420)
+        d.header("info", name, f"{kind}  ·  {human(size)}" + (f"  ·  modificado {when}" if when else "") +
+                 f"\n{path}")
+        d.buttons([("Mostrar en el " + FILE_MANAGER, "secondary", "show"), ("Al Colector", "secondary", "collect"),
+                   ("Cerrar", "primary", None)])
+        box = ctk.CTkFrame(d.body, fg_color=C["bg"], corner_radius=12, border_width=1, border_color=C["border"])
+        box.pack(fill="both", expand=True, padx=24, pady=12)
+        shown = False
+        if not is_dir and Image is not None and ext in {"png", "jpg", "jpeg", "gif", "bmp", "webp", "ico", "tif",
+                                                          "tiff"} and size < 200 * 1024 * 1024:
+            try:
+                im = Image.open(path)
+                im.thumbnail((int(720 * _scale_of(d)), int(330 * _scale_of(d))))
+                cim = ctk.CTkImage(light_image=im, dark_image=im, size=(im.width / _scale_of(d),
+                                                                      im.height / _scale_of(d)))
+                ctk.CTkLabel(box, image=cim, text="").pack(expand=True, pady=12)
+                d._img = cim
+                shown = True
+            except Exception:  # noqa: BLE001
+                pass
+        if not shown and not is_dir and size < 4 * 1024 * 1024:
+            try:
+                with open(path, "rb") as fh:
+                    raw = fh.read(16000)
+                if b"\x00" not in raw[:4000]:
+                    tb = ctk.CTkTextbox(box, font=ctk.CTkFont(family=MONO_FONT, size=12), fg_color=C["bg"],
+                                        text_color=C["muted"], border_width=0, corner_radius=10)
+                    tb.insert("end", raw.decode("utf-8", errors="replace"))
+                    tb.configure(state="disabled")
+                    tb.pack(fill="both", expand=True, padx=6, pady=6)
+                    shown = True
+            except OSError:
+                pass
+        if not shown and is_dir and node is not None:
+            items = sorted(node.children + node.top_files, key=lambda c: c.size, reverse=True)[:14]
+            for ch in items:
+                r = ctk.CTkFrame(box, fg_color="transparent")
+                r.pack(fill="x", padx=16, pady=(8, 0))
+                ctk.CTkLabel(r, text=("▸  " if not ch.is_file else "     ") + ch.name, font=F(12), anchor="w",
+                             text_color=C["text"]).pack(side="left")
+                ctk.CTkLabel(r, text=human(ch.size), font=F(12, "bold"), text_color=C["muted"]).pack(side="right")
+                bar = self._bar(box, ch.size / (node.size or 1), 4)
+                bar.configure(progress_color=seg_color(0 if not items else 360 * items.index(ch) / len(items), 1))
+                bar.pack(fill="x", padx=16, pady=(2, 0))
+            shown = bool(items)
+        if not shown:
+            ctk.CTkLabel(box, text="Sin vista previa para este tipo de archivo", font=F(13),
+                         text_color=C["faint"]).pack(expand=True)
+        self.wait_window(d)
+        if d.result == "show":
+            core.open_in_explorer(path)
+        elif d.result == "collect":
+            self._collect([(path, size)])
 
     def _export_csv(self):
         if not self.scan_result:
@@ -1413,10 +1927,11 @@ class App(ctk.CTk):
     def _update_collector(self):
         n = len(self.collector)
         total = sum(self.collector.values())
-        self.col_label.configure(text=f"{n} elementos · {human(total)}" if n else "Vacío: añade carpetas o archivos")
+        self.col_label.configure(text=f"{n} elementos · {human(total)}" if n else
+                                 "Arrastra aquí carpetas y archivos desde el mapa o las listas")
         self.col_count.configure(text=str(n), fg_color=C["accent"] if n else C["surface2"])
         state = "normal" if n else "disabled"
-        self.col_del.configure(state=state)
+        self.col_del.configure(state=state, fg_color=C["bad_h"] if n else C["bad_off"])
         self.col_view.configure(state=state)
 
     def _collector_review(self):
@@ -1532,7 +2047,9 @@ class App(ctk.CTk):
                                checkable=True, tree=False, height=16, on_open=self._open_node,
                                empty_text="Analiza un disco o carpeta y pulsa «Buscar duplicados»")
         self.dup_table.pack(fill="both", expand=True)
-        self.dup_table.context_menu([("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(self.dup_table.focused())),
+        self.dup_table.enable_drag(self._table_drag)
+        self.dup_table.context_menu([("Vista previa", lambda: self.preview(self.dup_table.focused())),
+                                     ("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(self.dup_table.focused())),
                                      ("Añadir al Colector", lambda: self._collect_rows(self.dup_table, False))])
         self.hint(page, "Compara tamaño y huella del contenido (BLAKE2), así que solo lista copias exactas. "
                         "«Marcar copias» deja sin marcar la primera de cada grupo.")
@@ -1638,9 +2155,12 @@ class App(ctk.CTk):
                                checkable=True, height=16, on_open=self._open_node, empty_text=EMPTY_SCAN)
         self.big_table.pack(fill="both", expand=True)
         self.big_table.bind("<<CheckChanged>>", lambda e: self._update_checked_info(self.big_table, self.big_info))
-        self.big_table.context_menu([("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(self.big_table.focused())),
+        self.big_table.enable_drag(self._table_drag)
+        self.big_table.context_menu([("Vista previa", lambda: self.preview(self.big_table.focused())),
+                                     ("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(self.big_table.focused())),
                                      ("Borrar…", lambda: self._delete_rows(self.big_table))])
-        self.hint(page, "Clic en la casilla para marcar · doble clic lo muestra en el " + FILE_MANAGER + ".")
+        self.hint(page, "Clic en la casilla para marcar · doble clic lo muestra en el " + FILE_MANAGER +
+                        " · arrastra filas al Colector.")
 
     def _fill_bigfiles(self):
         t = self.big_table
@@ -1719,6 +2239,7 @@ class App(ctk.CTk):
         self.model_table.pack(fill="both", expand=True)
         self.model_table.bind("<<CheckChanged>>",
                               lambda e: self._update_checked_info(self.model_table, self.model_info))
+        self.model_table.enable_drag(self._table_drag)
         self.model_table.context_menu([("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(self.model_table.focused())),
                                        ("Borrar…", lambda: self._delete_rows(self.model_table))])
         self.hint(page, "Los modelos de Ollama se eliminan con «ollama rm» para no dejar la instalación inconsistente.")
@@ -1809,6 +2330,7 @@ class App(ctk.CTk):
                                checkable=True, height=7, on_open=self._open_node, empty_text="Pulsa «Buscar restos»")
         self.res_table.pack(fill="both", expand=True)
         self.res_table.bind("<<CheckChanged>>", lambda e: self._update_checked_info(self.res_table, self.res_info))
+        self.res_table.enable_drag(self._table_drag)
         self.res_table.context_menu([("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(self.res_table.focused())),
                                      ("Borrar…", lambda: self._delete_rows(self.res_table))])
         self.hint(page, "Es una estimación: abre cada carpeta y revísala antes de borrar. Por defecto va a la Papelera.")

@@ -23,19 +23,23 @@ Aplicación de escritorio para **Windows, macOS y Linux**, con interfaz oscura, 
 ## ✨ Funcionalidades
 
 ### Discos
-- Espacio libre, usado y total del disco del sistema, con un anillo de uso, y tarjetas para el resto de discos.
+- Espacio libre, usado y total del disco del sistema, con un anillo de uso, y una fila con barra de capacidad para cada uno del resto de discos. **Se actualiza en tiempo real**, sin tener que analizar.
 - Tamaño de la **Papelera**, con botón para vaciarla.
-- Archivos de hibernación y memoria virtual (`hiberfil.sys`, `pagefile.sys`, `/swapfile`, `sleepimage`), con consejos para reducirlos.
+- Archivos de hibernación y memoria virtual (`hiberfil.sys`, `pagefile.sys`, `/swapfile`, `sleepimage`), con consejos para reducirlos, e instantáneas locales de Time Machine en macOS.
 - Accesos directos a las herramientas del sistema: Liberador de espacio y Sensor de almacenamiento en Windows, Almacenamiento y Utilidad de Discos en macOS, Analizador de uso de disco en Linux.
 
 ### Mapa del disco
-- **Mapa de anillos interactivo**: cada anillo es un nivel de carpetas y el tamaño de cada arco es lo que ocupa.
-- Pasa el ratón para ver el tamaño y el porcentaje; haz clic para entrar en una carpeta y en el centro para subir.
-- Ruta de navegación, lista ordenada por tamaño con barra de porcentaje y menú contextual (mostrar en el gestor de archivos, copiar ruta, añadir al Colector, borrar).
+- **Mapa de anillos interactivo**, suavizado y animado: cada anillo es un nivel de carpetas, el tamaño de cada arco es lo que ocupa y los colores siguen un arcoíris por posición.
+- Los **archivos grandes** (1 MB o más) aparecen como segmentos propios dentro de su carpeta, además de las carpetas.
+- **Espacio oculto**: al analizar un disco entero, la diferencia entre lo usado y lo que se ha podido leer aparece como un segmento gris (archivos del sistema, carpetas sin permisos, instantáneas).
+- Pasa el ratón para ver el tamaño y el porcentaje; haz clic para entrar en una carpeta y en el centro para subir. Animación de progreso mientras analiza.
+- **Vista previa rápida** (tecla Espacio o clic en un archivo del mapa): imágenes, texto o el contenido de la carpeta, con botones para mostrarlo o mandarlo al Colector.
+- Ruta de navegación, lista ordenada por tamaño con barra de porcentaje y menú contextual (vista previa, mostrar en el gestor de archivos, copiar ruta, añadir al Colector, borrar).
 - **Exportar a CSV** el resultado del análisis.
+- En macOS y Linux cuenta el espacio físico real (bloques ocupados) y los enlaces duros una sola vez.
 
 ### Colector
-- Una cesta en la barra lateral: arrastra ahí carpetas y archivos desde cualquier pantalla y bórralos todos juntos al final, revisando la lista completa antes.
+- Una cesta en la barra lateral: **arrastra** ahí segmentos del mapa o filas de cualquier lista (mapa, archivos grandes, duplicados, modelos, restos) y bórralos todos juntos al final, revisando la lista completa antes.
 
 ### Tipos de archivo
 - Cuánto ocupan los vídeos, imágenes, modelos de IA, comprimidos, código, documentos…, con una barra apilada y la tabla de extensiones que más ocupan.

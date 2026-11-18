@@ -912,15 +912,21 @@ def clean_category(cat: Category, permanent: bool,
 # Analizador de carpetas (un solo recorrido: árbol + archivos grandes + modelos)
 # --------------------------------------------------------------------------
 class Node:
-    __slots__ = ("name", "path", "size", "files", "children", "own_files")
+    __slots__ = ("name", "path", "size", "files", "children", "own_files", "top_files", "is_file")
 
-    def __init__(self, name: str, path: str):
+    def __init__(self, name: str, path: str, is_file: bool = False):
         self.name = name
         self.path = path
         self.size = 0
         self.files = 0
         self.own_files = 0  # bytes de archivos directamente en esta carpeta
         self.children: list[Node] = []
+        self.top_files: list[Node] = []  # archivos grandes de esta carpeta (para dibujarlos en el mapa)
+        self.is_file = is_file
+
+
+TOP_FILE_MIN = 1024 * 1024   # archivos de 1 MB o más se guardan uno a uno en el árbol
+TOP_FILES_PER_DIR = 30
 
 
 @dataclass
@@ -964,6 +970,47 @@ def kind_of(ext: str) -> str:
     return _KIND_BY_EXT.get(ext.lower().lstrip("."), "Otros")
 
 
+def _physical_size(entry: os.DirEntry, seen: set[tuple[int, int]]) -> int:
+    """Espacio que ocupa de verdad: bloques reservados en macOS/Linux y enlaces duros una sola vez."""
+    if IS_WIN:
+        return _entry_size(entry)[0]
+    try:
+        st = entry.stat(follow_symlinks=False)
+    except OSError:
+        return 0
+    if stat.S_ISLNK(st.st_mode):
+        return 0
+    if st.st_nlink > 1:
+        key = (st.st_dev, st.st_ino)
+        if key in seen:
+            return 0
+        seen.add(key)
+    blocks = getattr(st, "st_blocks", None)
+    return blocks * 512 if blocks is not None else st.st_size
+
+
+def files_inside(node: Node) -> list[Node]:
+    """Archivos grandes guardados uno a uno de una carpeta (ya ordenados de mayor a menor)."""
+    return node.top_files
+
+
+def loose_bytes(node: Node) -> int:
+    """Bytes de archivos de la carpeta que no se guardan uno a uno (pequeños)."""
+    return max(0, node.own_files - sum(f.size for f in node.top_files))
+
+
+def local_snapshots() -> list[str]:
+    """Instantáneas locales de Time Machine (macOS). Pueden ocupar mucho sin verse en Finder."""
+    if not IS_MAC:
+        return []
+    try:
+        out = subprocess.run(["tmutil", "listlocalsnapshots", "/"], capture_output=True, text=True,
+                             timeout=15).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [ln.strip() for ln in out.splitlines() if "com.apple" in ln]
+
+
 SKIP_ROOT_DIRS = {"/proc", "/sys", "/dev", "/run", "/System/Volumes", "/Volumes", "/private/var/vm", "/snap"}
 
 
@@ -979,6 +1026,7 @@ def scan_tree(root_path: str, cancel: threading.Event | None = None,
     errors = 0
     count = 0
     total_bytes = 0
+    seen_links: set[tuple[int, int]] = set()  # enlaces duros: solo cuentan una vez
     # recorrido iterativo en pre-orden; luego se suman tamaños en post-orden
     order: list[Node] = []
     stack = [root]
@@ -993,6 +1041,7 @@ def scan_tree(root_path: str, cancel: threading.Event | None = None,
         except OSError:
             errors += 1
             continue
+        tops: list[tuple[int, str, str]] = []
         for e in entries:
             try:
                 if e.is_dir(follow_symlinks=False):
@@ -1002,7 +1051,9 @@ def scan_tree(root_path: str, cancel: threading.Event | None = None,
                     node.children.append(child)
                     stack.append(child)
                 else:
-                    s, _ = _entry_size(e)
+                    s = _physical_size(e, seen_links)
+                    if s >= TOP_FILE_MIN:
+                        tops.append((s, e.name, e.path))
                     node.own_files += s
                     node.files += 1
                     count += 1
@@ -1027,6 +1078,12 @@ def scan_tree(root_path: str, cancel: threading.Event | None = None,
                         models.append((s, e.path))
             except OSError:
                 errors += 1
+        if tops:
+            tops.sort(reverse=True)
+            for s, name, path in tops[:TOP_FILES_PER_DIR]:
+                f = Node(name, path, True)
+                f.size, f.files = s, 1
+                node.top_files.append(f)
         if progress and len(order) % 200 == 0:
             progress(count, total_bytes, node.path)
     for node in reversed(order):
@@ -1290,7 +1347,7 @@ def _linux_apps() -> list[InstalledApp]:
             if len(parts) >= 2:
                 apps.append(InstalledApp(parts[0], parts[1], parts[2] if len(parts) > 2 else "",
                                          _parse_size(parts[3]) if len(parts) > 3 else 0,
-                                         os.path.join(DATA, "flatpak", "app", parts[1])
+                                         os.path.join(XDG_DATA, "flatpak", "app", parts[1])
                                          if len(parts) > 4 and parts[4] == "user" else
                                          os.path.join("/var/lib/flatpak/app", parts[1]),
                                          f"flatpak uninstall {parts[1]}", "", "flatpak"))
