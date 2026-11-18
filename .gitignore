@@ -1,0 +1,10 @@
+.venv/
+build/
+dist/
+__pycache__/
+*.spec
+.env
+*.log
+generar_portada.py
+generar_portada.bat
+docs/hero_model.txt
