@@ -26,6 +26,7 @@ Aplicación de escritorio para **Windows, macOS y Linux**, con interfaz oscura, 
 
 ### Discos
 - Espacio libre, usado y total del disco del sistema, con un anillo de uso, y una fila con barra de capacidad para cada uno del resto de discos. **Se actualiza en tiempo real**, sin tener que analizar.
+- **Espacio liberado**: cuántos GB has liberado con la app desde que la instalaste (cuenta los borrados definitivos, la Papelera vaciada y los modelos eliminados).
 - Tamaño de la **Papelera**, con botón para vaciarla.
 - Archivos de hibernación y memoria virtual (`hiberfil.sys`, `pagefile.sys`, `/swapfile`, `sleepimage`), con consejos para reducirlos, e instantáneas locales de Time Machine en macOS.
 - Accesos directos a las herramientas del sistema: Liberador de espacio y Sensor de almacenamiento en Windows, Almacenamiento y Utilidad de Discos en macOS, Analizador de uso de disco en Linux.

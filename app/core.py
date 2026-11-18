@@ -1587,6 +1587,38 @@ def save_settings(data: dict) -> None:
         pass
 
 
+def freed_stats() -> tuple[int, str]:
+    """Total de bytes liberados con la app y fecha (AAAA-MM-DD) desde la que se cuenta."""
+    s = load_settings()
+    since = s.get("freed_since")
+    if not since:
+        import datetime
+        since = datetime.date.today().isoformat()
+        s["freed_since"] = since
+        s.setdefault("freed_total", 0)
+        save_settings(s)
+    try:
+        total = max(0, int(s.get("freed_total", 0)))
+    except (TypeError, ValueError):
+        total = 0
+    return total, since
+
+
+def add_freed(nbytes: int) -> int:
+    """Suma espacio realmente liberado (borrado definitivo, Papelera vaciada, modelos eliminados)."""
+    freed_stats()
+    s = load_settings()
+    try:
+        total = max(0, int(s.get("freed_total", 0)))
+    except (TypeError, ValueError):
+        total = 0
+    if nbytes > 0:
+        total += int(nbytes)
+        s["freed_total"] = total
+        save_settings(s)
+    return total
+
+
 def parse_version(v: str) -> tuple[int, int, int]:
     nums = [int(n) for n in re.findall(r"\d+", v or "")[:3]]
     nums += [0] * (3 - len(nums))

@@ -19,7 +19,7 @@ import core  # noqa: E402
 from core import human  # noqa: E402
 
 APP_NAME = "Desktop Free Space"
-VERSION = "2.3.1"
+VERSION = "2.4.0"
 
 # ---------------------------------------------------------------------------
 # Sistema visual
@@ -967,12 +967,12 @@ class App(ctk.CTk):
         side.grid_propagate(False)
         side.pack_propagate(False)
         logo = ctk.CTkFrame(side, fg_color="transparent")
-        logo.pack(fill="x", padx=20, pady=(26, 28))
-        Ring(logo, size=40, thickness=7, bg=C["side"]).draw(0.72, "", "")
+        logo.pack(fill="x", padx=18, pady=(26, 28))
+        Ring(logo, size=34, thickness=6, bg=C["side"]).draw(0.72, "", "")
         logo.winfo_children()[-1].pack(side="left")
         lt = ctk.CTkFrame(logo, fg_color="transparent")
-        lt.pack(side="left", padx=12)
-        ctk.CTkLabel(lt, text="Desktop Free Space", font=F(15, "bold"), text_color=C["text"]).pack(anchor="w")
+        lt.pack(side="left", padx=10)
+        ctk.CTkLabel(lt, text="Desktop Free Space", font=F(14, "bold"), text_color=C["text"], anchor="w").pack(anchor="w")
         ctk.CTkLabel(lt, text=f"Gestor de espacio · v{VERSION}", font=F(11), text_color=C["faint"]).pack(anchor="w")
         ctk.CTkLabel(side, text="MENÚ", font=F(10, "bold"), text_color=C["faint"]).pack(anchor="w", padx=26, pady=(0, 6))
         for key, label, ico in PAGES:
@@ -1168,8 +1168,12 @@ class App(ctk.CTk):
         text = str(text)
         self.status.configure(text=text if len(text) < 150 else text[:60] + " … " + text[-80:])
 
-    def after_delete(self, res: core.DeleteResult):
+    def after_delete(self, res: core.DeleteResult, permanent: bool = True):
+        if permanent:
+            core.add_freed(res.freed)
         msg = f"{res.deleted:,} archivos borrados.".replace(",", ".")
+        if not permanent and res.freed:
+            msg += "\nEstán en la Papelera: el espacio se libera al vaciarla."
         kind = "ok"
         if res.failed:
             kind = "warn"
@@ -1200,7 +1204,7 @@ class App(ctk.CTk):
         self.sum_body.pack(fill="both", expand=True)
         self.sum_body.grid_columnconfigure((0, 1, 2), weight=1, uniform="c")
 
-    def _tile(self, parent, col, title, value, sub, action=None, kind="secondary", row=1, dot=None):
+    def _tile(self, parent, col, title, value, sub, action=None, kind="secondary", row=2, dot=None):
         t = card(parent)
         t.grid(row=row, column=col, sticky="nsew", padx=(0 if col == 0 else 7, 0 if col == 2 else 7), pady=(0, 14))
         hd = ctk.CTkFrame(t, fg_color="transparent")
@@ -1257,6 +1261,22 @@ class App(ctk.CTk):
                              ).pack(anchor="w", padx=4, pady=(3, 6))
             self._drive_rows.append((sysdrive.path, ring, big, bar, info, True))
 
+        freed, since = core.freed_stats()
+        y, m, d = (since.split("-") + ["", "", ""])[:3]
+        months = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
+        try:
+            since_txt = f"{int(d)} {months[int(m) - 1]} {y}"
+        except (ValueError, IndexError):
+            since_txt = since
+        fb = ctk.CTkFrame(body, fg_color=C["surface"], corner_radius=14, border_width=1, border_color=C["border"])
+        fb.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 14))
+        ctk.CTkLabel(fb, text="✦", font=F(18, "bold"), text_color=C["accent"], width=24).pack(side="left", padx=(22, 8),
+                                                                                             pady=16)
+        ctk.CTkLabel(fb, text=f"{human(freed)} liberados" if freed else "Aún no has liberado espacio",
+                     font=F(18, "bold"), text_color=C["text"]).pack(side="left")
+        ctk.CTkLabel(fb, text=f"con Desktop Free Space desde el {since_txt}", font=F(13), text_color=C["muted"]
+                     ).pack(side="left", padx=10)
+
         size, n = core.recycle_bin_size()
         self._tile(body, 0, "Papelera de reciclaje" if core.IS_WIN else "Papelera", human(size),
                    f"{n} elementos · ocupan espacio hasta vaciarla", ("Vaciar", self._empty_bin) if size else None,
@@ -1278,7 +1298,7 @@ class App(ctk.CTk):
             sub += f" · {len(snaps)} instantáneas locales de Time Machine"
         self._tile(body, 2, "Archivos del sistema", human(sum(x[2] for x in sysfiles)) if sysfiles else "—", sub,
                    dot=C["accent2"])
-        row = 2
+        row = 3
         others = [d for d in drives if d is not sysdrive]
         if others:
             ctk.CTkLabel(body, text="Otros discos", font=F(15, "bold"), text_color=C["text"]
@@ -1358,6 +1378,8 @@ class App(ctk.CTk):
         if self.confirm("¿Vaciar la Papelera?", f"{human(size)} en {n} elementos. No se podrá recuperar.",
                         "Vaciar", danger=True):
             core.empty_recycle_bin()
+            after, _n = core.recycle_bin_size()
+            core.add_freed(max(0, size - after))
             self.refresh_summary()
 
     # =====================================================================
@@ -1535,7 +1557,7 @@ class App(ctk.CTk):
 
         def done(res):
             self._fill_categories()
-            self.after_delete(res)
+            self.after_delete(res, perm)
         self.run_task("Limpiando…", work, done)
 
     # =====================================================================
@@ -2123,7 +2145,7 @@ class App(ctk.CTk):
         def done(res):
             if on_done:
                 on_done([p for p in paths if not os.path.lexists(p)])
-            self.after_delete(res)
+            self.after_delete(res, perm)
         self.run_task("Borrando…", work, done)
 
     # =====================================================================
@@ -2278,6 +2300,7 @@ class App(ctk.CTk):
         def done(res):
             ok, out = res
             if ok:
+                core.add_freed(m.size)
                 self.alert(f"Has liberado {human(m.size)}.", f"{m.name} eliminado", "ok")
             else:
                 self.alert(f"{out}\n\nComprueba que Ollama está instalado y en ejecución.",

@@ -28,6 +28,7 @@ A dark-themed desktop app for **Windows, macOS and Linux** that draws an interac
 
 ### Disks (Discos)
 - Free, used and total space of the system disk with a usage ring, plus a row with a capacity bar for every other disk. **Updates in real time**, no scan needed.
+- **Space freed**: how many GB you have freed with the app since you installed it (permanent deletions, emptied Trash and removed models).
 - Size of the **Trash / Recycle Bin**, with a button to empty it.
 - Hibernation and virtual memory files (`hiberfil.sys`, `pagefile.sys`, `/swapfile`, `sleepimage`) with tips to shrink them, and local Time Machine snapshots on macOS.
 - Shortcuts to the system tools: Disk Cleanup and Storage Sense on Windows, Storage and Disk Utility on macOS, Disk Usage Analyzer on Linux.
