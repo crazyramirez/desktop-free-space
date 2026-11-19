@@ -23,7 +23,7 @@ import i18n  # noqa: E402
 from i18n import T, num, date_text  # noqa: E402,F401
 
 APP_NAME = "Desktop Free Space"
-VERSION = "2.8.0"
+VERSION = "2.8.1"
 
 # ---------------------------------------------------------------------------
 # Sistema visual
@@ -307,7 +307,8 @@ class PopupMenu(tk.Toplevel):
 
     current: "PopupMenu | None" = None
 
-    def __init__(self, master, items, x, y, title="", subtitle="", min_width=0):
+    def __init__(self, master, items, x, y, title="", subtitle="", min_width=0, above=False):
+        self.above = above
         if PopupMenu.current is not None:
             PopupMenu.current.close()
         super().__init__(master)
@@ -386,7 +387,10 @@ class PopupMenu(tk.Toplevel):
         w, h = self.winfo_reqwidth(), self.winfo_reqheight()
         left, top, right, bottom = _work_area(x, y, self)
         nx = x + 2 if x + 2 + w <= right else max(left, x - w - 2)
-        ny = y + 2 if y + 2 + h <= bottom else max(top, y - h - 2)
+        if self.above:
+            ny = y - h - 4 if y - h - 4 >= top else min(y + 2, bottom - h)
+        else:
+            ny = y + 2 if y + 2 + h <= bottom else max(top, y - h - 2)
         self.geometry(f"+{nx}+{ny}")
         try:
             self.attributes("-alpha", 0.0)
@@ -2222,9 +2226,32 @@ class App(ctk.CTk):
             ic.bind("<Enter>", lambda e, b=b: b._on_enter(), add="+")  # el botón no pierde su resaltado
             ic.bind("<Leave>", lambda e, b=b: b._on_leave(), add="+")
             self.nav[key] = (b, ic)
+        # selector de idioma: lo último de la barra lateral
+        self.lang_btn = ctk.CTkButton(side, text="", command=self._lang_menu, height=34, corner_radius=8, anchor="w",
+                                      font=F(12, "bold"), fg_color="transparent", hover_color=C["hover"],
+                                      text_color=C["muted"], border_width=1, border_color=C["border"])
+        self.lang_btn.pack(side="bottom", fill="x", padx=14, pady=(0, 16))
+        lb = self.lang_btn
+        g1 = ctk.CTkLabel(lb, text=icon("globe"), font=IF(14), text_color=C["muted"], width=18, height=18)
+        g1.place(x=12, rely=0.5, anchor="w")
+        g2 = ctk.CTkLabel(lb, text="\uE70E" if ICON_FONT else "⌃", font=IF(10), text_color=C["faint"], width=14,
+                          height=18)
+        g2.place(relx=1.0, x=-12, rely=0.5, anchor="e")
+        for w in (g1, g2):
+            w.bind("<Button-1>", lambda e: self._lang_menu())
+            w.bind("<Enter>", lambda e: lb._on_enter(), add="+")
+            w.bind("<Leave>", lambda e: lb._on_leave(), add="+")
+        for w in (lb, g1, g2):  # los iconos siguen el fondo del botón
+            w.bind("<Enter>", lambda e: [x.configure(fg_color=C["hover"]) for x in (g1, g2)], add="+")
+            w.bind("<Leave>", lambda e: [x.configure(fg_color=C["side"]) for x in (g1, g2)], add="+")
+        for x in (g1, g2):
+            x.configure(fg_color=C["side"])
+        self._lang_text()
+        g1.lift()
+        g2.lift()  # por encima del texto del botón
         # tarjeta de permisos / sistema
         adm = ctk.CTkFrame(side, fg_color=C["surface"], corner_radius=12, border_width=1, border_color=C["border"])
-        adm.pack(side="bottom", fill="x", padx=14, pady=(8, 18))
+        adm.pack(side="bottom", fill="x", padx=14, pady=(8, 10))
         is_admin = core.is_admin()
         hdr = ctk.CTkFrame(adm, fg_color="transparent")
         hdr.pack(fill="x", padx=14, pady=(12, 0))
@@ -2245,30 +2272,16 @@ class App(ctk.CTk):
         if core.IS_WIN and not is_admin:
             restart = btn(adm, T("Reiniciar como admin"), self._relaunch_admin, "secondary")
             restart.pack(fill="x", padx=12, pady=(0, 6))
-        upd = ctk.CTkFrame(adm, fg_color="transparent")
-        upd.pack(fill="x", padx=6, pady=(0, 10))
-        ctk.CTkButton(upd, text=T("Buscar actualizaciones"), command=lambda: self._check_updates(manual=True),
-                      height=28, width=40, corner_radius=8, font=F(12, "bold"), **BTN_STYLES["ghost"]
-                      ).pack(side="right", fill="x", expand=True)
-        self.lang_btn = ctk.CTkButton(upd, text="     " + i18n.LANG.upper(), command=self._lang_menu, height=28,
-                                      width=50, corner_radius=8, font=F(12, "bold"), **BTN_STYLES["ghost"])
-        self.lang_btn.pack(side="right", padx=(4, 0), before=upd.winfo_children()[0])
-        gl = ctk.CTkLabel(self.lang_btn, text=icon("globe"), font=IF(13), text_color=C["muted"], width=16,
-                          height=16, fg_color="transparent")
-        gl.place(x=7, rely=0.5, anchor="w")
-        gl.bind("<Button-1>", lambda e: self._lang_menu())
-        gl.bind("<Enter>", lambda e: self.lang_btn._on_enter(), add="+")
-        gl.bind("<Leave>", lambda e: self.lang_btn._on_leave(), add="+")
-        for w in (self.lang_btn, gl):
-            w.bind("<Enter>", lambda e: gl.configure(fg_color=C["hover"]), add="+")
-            w.bind("<Leave>", lambda e: gl.configure(fg_color="transparent"), add="+")
+        upd = ctk.CTkButton(adm, text=T("Buscar actualizaciones"), command=lambda: self._check_updates(manual=True),
+                            height=28, corner_radius=8, font=F(12, "bold"), **BTN_STYLES["ghost"])
+        upd.pack(fill="x", padx=8, pady=(0, 10))
         # en ventanas bajas se ocultan primero el texto y luego «Buscar actualizaciones»
         # Contenido de la tarjeta en orden, y qué se oculta en cada nivel de compactación
         self._adm = adm
         self._adm_items = [(tip_l, dict(anchor="w", padx=14, pady=(4, 12)))]
         if restart is not None:
             self._adm_items.append((restart, dict(fill="x", padx=12, pady=(0, 6))))
-        self._adm_items.append((upd, dict(fill="x", padx=6, pady=(0, 10))))
+        self._adm_items.append((upd, dict(fill="x", padx=8, pady=(0, 10))))
         self._side_hide = [tip_l, upd] + ([restart] if restart is not None else []) + [adm]
         self._side_level = 0
         self._side_job = None
@@ -2350,7 +2363,7 @@ class App(ctk.CTk):
         if self._adm in hidden:
             self._adm.pack_forget()
         elif not self._adm.winfo_manager():
-            self._adm.pack(side="bottom", fill="x", padx=14, pady=(8, 18), before=self.col_frame)
+            self._adm.pack(side="bottom", fill="x", padx=14, pady=(8, 10), before=self.col_frame)
 
     def _fit_side(self):
         """Mantiene el Colector entero en ventanas bajas compactando la tarjeta de sistema."""
@@ -2520,15 +2533,28 @@ class App(ctk.CTk):
         except Exception as e:  # noqa: BLE001
             self.alert(str(e), T("No se pudo abrir"), "error")
 
+    def _lang_text(self):
+        name = dict(i18n.LANGS)[i18n.LANG]
+        txt = T("Automático") + " · " + name if i18n.choice() == "auto" else name
+        self.lang_btn.configure(text="        " + txt)
+
     def _lang_menu(self):
         b = self.lang_btn
-        items = [mi(name, lambda c=code: self._set_lang(c), "check" if code == i18n.LANG else "")
-                 for code, name in i18n.LANGS]
-        PopupMenu(self, items, b.winfo_rootx(), b.winfo_rooty() + b.winfo_height() + 4, title=T("Idioma"),
-                  min_width=200)
+        cur = i18n.choice()
+        sysname = dict(i18n.LANGS)[i18n.system_lang()]
+        items = [mi(T("Automático"), lambda: self._set_lang("auto"), "check" if cur == "auto" else "", sysname), SEP]
+        items += [mi(name, lambda c=code: self._set_lang(c), "check" if code == cur else "")
+                  for code, name in i18n.LANGS]
+        PopupMenu(self, items, b.winfo_rootx(), b.winfo_rooty(), title=T("Idioma"),
+                  min_width=b.winfo_width(), above=True)
 
-    def _set_lang(self, code):
-        if code == i18n.LANG:
+    def _set_lang(self, choice):
+        if choice == i18n.choice():
+            return
+        code = i18n.system_lang() if choice == "auto" else choice
+        if code == i18n.LANG:  # mismo idioma que ya se ve: basta con guardarlo
+            i18n.set_lang(choice)
+            self._lang_text()
             return
         # el aviso sale ya en el idioma elegido
         tt = i18n.texts(code)
@@ -2539,7 +2565,7 @@ class App(ctk.CTk):
                            tt("La app se reiniciará para mostrarse en {lang}.").format(lang=dict(i18n.LANGS)[code]),
                            [(tt("Cancelar"), "secondary", False), (tt("Reiniciar"), "primary", True)]) is True:
             return
-        i18n.set_lang(code)
+        i18n.set_lang(choice)
         if core.relaunch_self():
             self.destroy()
             os._exit(0)

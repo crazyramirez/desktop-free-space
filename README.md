@@ -44,7 +44,7 @@ A dark-themed desktop app for **Windows, macOS and Linux** that draws an interac
 
 ## ✨ Features
 
-**7 languages:** English, Español, Français, Deutsch, Italiano, 简体中文 and 日本語. The app follows your system language; change it any time with the 🌐 button in the sidebar.
+**7 languages:** English, Español, Français, Deutsch, Italiano, 简体中文 and 日本語. By default it follows your system language (**Automatic**); pick another one any time from the 🌐 selector at the bottom of the sidebar.
 
 ### Disks (Discos)
 - Free, used and total space of the system disk with a usage ring, plus a row with a capacity bar for every other disk. **Updates in real time**, no scan needed.

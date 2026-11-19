@@ -490,4 +490,5 @@ T = {
     "Cambiar idioma": "言語を変更",
     "La app se reiniciará para mostrarse en {lang}.": "アプリを再起動して{lang}で表示します。",
     "Reiniciar": "再起動",
+    "Automático": "自動",
 }

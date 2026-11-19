@@ -490,4 +490,5 @@ T = {
     "Cambiar idioma": "Sprache ändern",
     "La app se reiniciará para mostrarse en {lang}.": "Die App wird neu gestartet und auf {lang} angezeigt.",
     "Reiniciar": "Neu starten",
+    "Automático": "Automatisch",
 }

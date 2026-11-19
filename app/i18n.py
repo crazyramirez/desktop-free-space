@@ -99,6 +99,16 @@ def _load(code: str) -> dict:
 
 _forced = os.environ.get("DFS_LANG", "")  # para pruebas: fuerza un idioma sin tocar los ajustes
 LANG = (_forced if _forced in CODES else "") or saved_lang() or _system_lang() or "en"
+
+
+def system_lang() -> str:
+    """Idioma que se usa en modo automático."""
+    return _system_lang() or "en"
+
+
+def choice() -> str:
+    """Lo elegido por el usuario: un código de idioma o "auto" (sigue al sistema; es lo predeterminado)."""
+    return saved_lang() or "auto"
 _TABLE = _load(LANG)
 
 
@@ -147,7 +157,7 @@ def date_text(y: int, m: int, d: int) -> str:
 
 
 def set_lang(code: str) -> None:
-    """Guarda el idioma elegido (se aplica al reiniciar)."""
+    """Guarda el idioma elegido ("auto" = el del sistema). Se aplica al reiniciar."""
     path = _settings_path()
     try:
         with open(path, encoding="utf-8") as fh:

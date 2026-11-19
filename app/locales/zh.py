@@ -490,4 +490,5 @@ T = {
     "Cambiar idioma": "更改语言",
     "La app se reiniciará para mostrarse en {lang}.": "应用将重新启动并以{lang}显示。",
     "Reiniciar": "重新启动",
+    "Automático": "自动",
 }
