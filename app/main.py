@@ -19,9 +19,11 @@ import customtkinter as ctk
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import core  # noqa: E402
 from core import human  # noqa: E402
+import i18n  # noqa: E402
+from i18n import T, num, date_text  # noqa: E402,F401
 
 APP_NAME = "Desktop Free Space"
-VERSION = "2.7.1"
+VERSION = "2.8.0"
 
 # ---------------------------------------------------------------------------
 # Sistema visual
@@ -64,16 +66,16 @@ C = {
 RADIUS = 16
 UI_FONT = "Segoe UI"
 MONO_FONT = "Consolas"
-FILE_MANAGER = "Explorador" if core.IS_WIN else "Finder" if core.IS_MAC else "gestor de archivos"
+FILE_MANAGER = T("Explorador") if core.IS_WIN else "Finder" if core.IS_MAC else T("gestor de archivos")
 ICON_FONT = None
 ICONS_MDL2 = {"home": "\uE80F", "clean": "\uE75C", "folder": "\uE8B7", "file": "\uE7C3", "ai": "\uE99A",
               "apps": "\uE71D", "shield": "\uEA18", "trash": "\uE74D", "drive": "\uEDA2", "check": "\uE73E",
               "info": "\uE946", "warn": "\uE7BA", "map": "\uE81E", "list": "\uE8FD", "copy": "\uE8C8",
               "eye": "\uE890", "open": "\uE838", "add": "\uE710", "link": "\uE71B", "search": "\uE721",
-              "enter": "\uE76C"}
+              "enter": "\uE76C", "globe": "\uE774"}
 ICONS_FALLBACK = {"home": "⌂", "clean": "✦", "folder": "▤", "file": "▦", "ai": "◈", "apps": "▣", "shield": "⛨",
                   "trash": "✕", "drive": "◉", "check": "✓", "info": "i", "warn": "!", "map": "◔", "list": "≡",
-                  "copy": "⧉", "eye": "◉", "open": "▤", "add": "+", "link": "⧉", "search": "⌕", "enter": "›"}
+                  "copy": "⧉", "eye": "◉", "open": "▤", "add": "+", "link": "⧉", "search": "⌕", "enter": "›", "globe": "◍"}
 
 
 def icon(name: str) -> str:
@@ -929,7 +931,7 @@ class Table(ctk.CTkFrame):
         sizes = [self.sort_keys.get(k, {}).get("size") for k in sel]
         total = sum(s for s in sizes if isinstance(s, (int, float)))
         if len(sel) > 1:
-            title = f"{len(sel)} elementos seleccionados"
+            title = T("{n} elementos seleccionados", n=len(sel))
             sub = human(total) if total else ""
         else:
             key = sel[0] if sel else self.tv.focus()
@@ -1014,20 +1016,21 @@ class ConfirmDelete(Dialog):
         super().__init__(master, title, width=840, height=620)
         self.minsize(660, 480)
         total = sum(s for _, s in items)
-        self.header("danger", f"Vas a borrar {len(items)} elementos · {human(total)}", note)
+        self.header("danger", T("Vas a borrar {n} elementos · {size}", n=len(items), size=human(total)), note)
         box = ctk.CTkTextbox(self.body, font=ctk.CTkFont(family=MONO_FONT, size=12), fg_color=C["bg"],
                              text_color=C["muted"], border_width=1, border_color=C["border"], corner_radius=8)
         for p, s in items[:2000]:
             box.insert("end", f"{human(s):>10}   {p}\n")
         if len(items) > 2000:
-            box.insert("end", f"… y {len(items) - 2000} más\n")
+            box.insert("end", T("… y {n} más", n=len(items) - 2000) + "\n")
         box.configure(state="disabled")
         self.mode = tk.StringVar(value="perm" if default_permanent else "recycle")
-        self.buttons([("Cancelar", "secondary", None), ("Borrar", "danger_solid", "ok")])
+        self.buttons([(T("Cancelar"), "secondary", None), (T("Borrar"), "danger_solid", "ok")])
         opts = ctk.CTkFrame(self.body, fg_color="transparent")
         opts.pack(side="bottom", fill="x", padx=24)
-        for val, t1, t2 in (("recycle", "Enviar a la Papelera", "Recuperable. El espacio se libera al vaciarla."),
-                            ("perm", "Eliminar definitivamente", "Libera el espacio al momento. No se puede deshacer.")):
+        for val, t1, t2 in (("recycle", T("Enviar a la Papelera"), T("Recuperable. El espacio se libera al vaciarla.")),
+                            ("perm", T("Eliminar definitivamente"),
+                             T("Libera el espacio al momento. No se puede deshacer."))):
             row = ctk.CTkFrame(opts, fg_color=C["surface2"], corner_radius=8)
             row.pack(fill="x", pady=3)
             ctk.CTkRadioButton(row, text=t1, variable=self.mode, value=val, font=F(13, "bold"), width=230,
@@ -1148,9 +1151,10 @@ class Ring(tk.Canvas):
 # ---------------------------------------------------------------------------
 # Aplicación
 # ---------------------------------------------------------------------------
-PAGES = [("summary", "Discos", "home"), ("analyzer", "Mapa del disco", "map"), ("kinds", "Tipos de archivo", "list"),
-         ("clean", "Limpieza", "clean"), ("big", "Archivos grandes", "file"), ("dups", "Duplicados", "copy"),
-         ("models", "Modelos IA", "ai"), ("apps", "Aplicaciones", "apps")]
+PAGES = [("summary", T("Discos"), "home"), ("analyzer", T("Mapa del disco"), "map"),
+         ("kinds", T("Tipos de archivo"), "list"), ("clean", T("Limpieza"), "clean"),
+         ("big", T("Archivos grandes"), "file"), ("dups", T("Duplicados"), "copy"),
+         ("models", T("Modelos IA"), "ai"), ("apps", T("Aplicaciones"), "apps")]
 # ---------------------------------------------------------------------------
 # Mapa de anillos interactivo (sunburst)
 # ---------------------------------------------------------------------------
@@ -1193,6 +1197,11 @@ def _ease_out_back(t):
 
 def _ease_in_cubic(t):
     return t * t * t
+
+
+def _spaced(text: str) -> str:
+    """Letras separadas por espacios (no en chino ni japonés)."""
+    return text if i18n.LANG in ("zh", "ja") else " ".join(text)
 
 
 class _RingWorker(threading.Thread):
@@ -1455,10 +1464,10 @@ class ScanFX:
         I["ripple"] = cv.create_image(cx, cy)
         self.core_photo = self._core(r0)
         I["core"] = cv.create_image(cx, cy, image=self.core_photo)
-        I["t_label"] = cv.create_text(cx, cy - 26 * k, text="A N A L I Z A N D O", fill=C["accent"],
+        I["t_label"] = cv.create_text(cx, cy - 26 * k, text=_spaced(T("ANALIZANDO")), fill=C["accent"],
                                       font=(UI_FONT, 8, "bold"))
         I["t_big"] = cv.create_text(cx, cy, text="0 B", fill=C["text"], font=(UI_FONT, 19, "bold"))
-        I["t_files"] = cv.create_text(cx, cy + 24 * k, text="0 archivos", fill=C["muted"], font=(UI_FONT, 10))
+        I["t_files"] = cv.create_text(cx, cy + 24 * k, text=T("{n} archivos", n=0), fill=C["muted"], font=(UI_FONT, 10))
         self.cache: dict = {}
         if getattr(self, "rings_photo", None) is not None and self.worker is not None:
             self.worker.dirty = True
@@ -1694,11 +1703,11 @@ class ScanFX:
             self.shown_n += (self.n - self.shown_n) * ease
             self.shown_b += (self.b - self.shown_b) * ease
             self._set(I["t_big"], "big", text=human(int(self.shown_b)))
-            self._set(I["t_files"], "files", text=f"{int(round(self.shown_n)):,} archivos".replace(",", "."))
+            self._set(I["t_files"], "files", text=T("{n} archivos", n=num(int(round(self.shown_n)))))
             if cv.on_scan_text and now - self.last_text >= 0.25:
                 self.last_text = now
                 m, s_ = divmod(int(t), 60)
-                speed = f"{int(rate):,} archivos/s".replace(",", ".") if rate >= 1 else "preparando…"
+                speed = T("{n} archivos/s", n=num(int(rate))) if rate >= 1 else T("preparando…")
                 cv.on_scan_text(f"{m}:{s_:02d}   ·   {speed}   ·   {self._short_path()}")
         except tk.TclError:
             return
@@ -1808,14 +1817,14 @@ class Sunburst(tk.Canvas):
             self._spin = "fx"
             self.fx.start(root_path)
         else:  # sin Pillow: indicador sencillo
-            self.scan_text = "Preparando…"
+            self.scan_text = T("Preparando…")
             self._spin_tick()
 
     def scan_progress(self, n, b, p):
         if self.fx.running:
             self.fx.progress(n, b, p)
         else:
-            self.scan_text = f"{n:,} archivos · {human(b)}".replace(",", ".")
+            self.scan_text = T("{n} archivos · {size}", n=num(n), size=human(b))
 
     def stop_scanning(self):
         if self.fx.running:
@@ -1836,7 +1845,7 @@ class Sunburst(tk.Canvas):
             col = _mix(C["accent"], C["track"], i / 14)
             self.create_arc(cx - R, cy - R, cx + R, cy + R, start=-a0 + 90, extent=-8, style="arc", outline=col,
                             width=max(6, R * 0.07))
-        self.create_text(cx, cy - 12, text="Analizando…", fill=C["text"], font=(UI_FONT, 15, "bold"))
+        self.create_text(cx, cy - 12, text=T("Analizando…"), fill=C["text"], font=(UI_FONT, 15, "bold"))
         self.create_text(cx, cy + 14, text=self.scan_text, fill=C["muted"], font=(UI_FONT, 10))
         self._spin = self.after(40, self._spin_tick)
 
@@ -1880,11 +1889,11 @@ class Sunburst(tk.Canvas):
             ext = span * rest / n.size
             if ext >= 0.35:
                 self.segs.append([depth, cur, cur + ext, None, _mix(SMALL_COLOR, self.bgc, 0.1 * depth),
-                                  "Archivos pequeños", rest, "small"])
+                                  T("Archivos pequeños"), rest, "small"])
 
         walk(node, 1, 0.0, 360.0 * node.size / total)
         if hidden:
-            self.segs.append([1, 360.0 * node.size / total, 360.0, None, HIDDEN_COLOR, "Espacio oculto", hidden,
+            self.segs.append([1, 360.0 * node.size / total, 360.0, None, HIDDEN_COLOR, T("Espacio oculto"), hidden,
                               "hidden"])
 
     # -- dibujo --
@@ -1920,9 +1929,9 @@ class Sunburst(tk.Canvas):
         node = self.root_node
         cx, cy, rad = self.geometry_()
         if node is None:
-            self.create_text(cx, cy - 10, text="Elige un disco o una carpeta", fill=C["text"],
+            self.create_text(cx, cy - 10, text=T("Elige un disco o una carpeta"), fill=C["text"],
                              font=(UI_FONT, 15, "bold"))
-            self.create_text(cx, cy + 16, text="y pulsa «Analizar» para ver su mapa", fill=C["muted"],
+            self.create_text(cx, cy + 16, text=T("y pulsa «Analizar» para ver su mapa"), fill=C["muted"],
                              font=(UI_FONT, 11))
             return
         w, h = max(self.winfo_width(), 50), max(self.winfo_height(), 50)
@@ -2015,13 +2024,13 @@ class Sunburst(tk.Canvas):
             base = (n.size + (self.hidden if n is self.base_root else 0)) or 1
             sub = f"{size / base * 100:.1f} %"
             if seg[7] == "dir":
-                sub += f" · {seg[3].files:,} archivos".replace(",", ".")
+                sub += " · " + T("{n} archivos", n=num(seg[3].files))
             elif seg[7] == "hidden":
-                sub = "sistema, sin permisos, instantáneas…"
+                sub = T("sistema, sin permisos, instantáneas…")
             self._center_text(seg[5], human(size), sub)
         else:
-            self._center_text(n.name, human(n.size), "↑ subir" if self.history else
-                              f"{n.files:,} archivos".replace(",", "."))
+            self._center_text(n.name, human(n.size), T("↑ subir") if self.history else
+                              T("{n} archivos", n=num(n.files)))
 
     def _center_text(self, t, s, h):
         _cx, _cy, rad = self.geometry_()
@@ -2193,8 +2202,10 @@ class App(ctk.CTk):
         lt = ctk.CTkFrame(logo, fg_color="transparent")
         lt.pack(side="left", padx=10)
         ctk.CTkLabel(lt, text="Desktop Free Space", font=F(14, "bold"), text_color=C["text"], anchor="w").pack(anchor="w")
-        ctk.CTkLabel(lt, text=f"Gestor de espacio · v{VERSION}", font=F(11), text_color=C["faint"]).pack(anchor="w")
-        ctk.CTkLabel(side, text="MENÚ", font=F(10, "bold"), text_color=C["faint"]).pack(anchor="w", padx=26, pady=(0, 6))
+        ctk.CTkLabel(lt, text=T("Gestor de espacio · v{version}", version=VERSION), font=F(11), text_color=C["faint"]
+                     ).pack(anchor="w")
+        ctk.CTkLabel(side, text=T("MENÚ"), font=F(10, "bold"), text_color=C["faint"]).pack(anchor="w", padx=26,
+                                                                                          pady=(0, 6))
         for key, label, ico in PAGES:
             b = ctk.CTkButton(side, text=f"          {label}", anchor="w", height=42, corner_radius=8,
                               font=F(13, "bold"), fg_color="transparent", hover_color=C["hover"],
@@ -2219,29 +2230,45 @@ class App(ctk.CTk):
         hdr.pack(fill="x", padx=14, pady=(12, 0))
         ctk.CTkLabel(hdr, text=icon("shield"), font=IF(14), text_color=C["ok"] if is_admin else C["warn"]
                      ).pack(side="left")
-        ctk.CTkLabel(hdr, text=f"{core.OS_NAME} · " + ("Administrador" if is_admin else "Modo estándar"),
-                     font=F(12, "bold"), text_color=C["text"]).pack(side="left", padx=8)
+        ctk.CTkLabel(hdr, text=f"{core.OS_NAME} · " + (T("Administrador") if is_admin else T("Modo estándar")),
+                     font=F(12, "bold"), text_color=C["text"], wraplength=150, justify="left"
+                     ).pack(side="left", padx=8)
         if core.IS_WIN:
-            tip = ("Puedes limpiar también las carpetas de Windows." if is_admin else
-                   "Para limpiar Windows Temp y Windows Update hacen falta permisos.")
+            tip = (T("Puedes limpiar también las carpetas de Windows.") if is_admin else
+                   T("Para limpiar Windows Temp y Windows Update hacen falta permisos."))
         else:
-            tip = "Limpia lo de tu usuario. Lo del sistema necesita sudo." if not is_admin else "Ejecutando como root."
+            tip = (T("Limpia lo de tu usuario. Lo del sistema necesita sudo.") if not is_admin else
+                   T("Ejecutando como root."))
         tip_l = ctk.CTkLabel(adm, text=tip, font=F(11), text_color=C["muted"], wraplength=186, justify="left")
         tip_l.pack(anchor="w", padx=14, pady=(4, 12))
         restart = None
         if core.IS_WIN and not is_admin:
-            restart = btn(adm, "Reiniciar como admin", self._relaunch_admin, "secondary")
+            restart = btn(adm, T("Reiniciar como admin"), self._relaunch_admin, "secondary")
             restart.pack(fill="x", padx=12, pady=(0, 6))
-        upd = ctk.CTkButton(adm, text="Buscar actualizaciones", command=lambda: self._check_updates(manual=True),
-                            height=28, corner_radius=8, font=F(12, "bold"), **BTN_STYLES["ghost"])
-        upd.pack(fill="x", padx=8, pady=(0, 10))
+        upd = ctk.CTkFrame(adm, fg_color="transparent")
+        upd.pack(fill="x", padx=6, pady=(0, 10))
+        ctk.CTkButton(upd, text=T("Buscar actualizaciones"), command=lambda: self._check_updates(manual=True),
+                      height=28, width=40, corner_radius=8, font=F(12, "bold"), **BTN_STYLES["ghost"]
+                      ).pack(side="right", fill="x", expand=True)
+        self.lang_btn = ctk.CTkButton(upd, text="     " + i18n.LANG.upper(), command=self._lang_menu, height=28,
+                                      width=50, corner_radius=8, font=F(12, "bold"), **BTN_STYLES["ghost"])
+        self.lang_btn.pack(side="right", padx=(4, 0), before=upd.winfo_children()[0])
+        gl = ctk.CTkLabel(self.lang_btn, text=icon("globe"), font=IF(13), text_color=C["muted"], width=16,
+                          height=16, fg_color="transparent")
+        gl.place(x=7, rely=0.5, anchor="w")
+        gl.bind("<Button-1>", lambda e: self._lang_menu())
+        gl.bind("<Enter>", lambda e: self.lang_btn._on_enter(), add="+")
+        gl.bind("<Leave>", lambda e: self.lang_btn._on_leave(), add="+")
+        for w in (self.lang_btn, gl):
+            w.bind("<Enter>", lambda e: gl.configure(fg_color=C["hover"]), add="+")
+            w.bind("<Leave>", lambda e: gl.configure(fg_color="transparent"), add="+")
         # en ventanas bajas se ocultan primero el texto y luego «Buscar actualizaciones»
         # Contenido de la tarjeta en orden, y qué se oculta en cada nivel de compactación
         self._adm = adm
         self._adm_items = [(tip_l, dict(anchor="w", padx=14, pady=(4, 12)))]
         if restart is not None:
             self._adm_items.append((restart, dict(fill="x", padx=12, pady=(0, 6))))
-        self._adm_items.append((upd, dict(fill="x", padx=8, pady=(0, 10))))
+        self._adm_items.append((upd, dict(fill="x", padx=6, pady=(0, 10))))
         self._side_hide = [tip_l, upd] + ([restart] if restart is not None else []) + [adm]
         self._side_level = 0
         self._side_job = None
@@ -2253,7 +2280,7 @@ class App(ctk.CTk):
         col.pack(side="bottom", fill="x", padx=14, pady=(8, 0))
         ch = ctk.CTkFrame(col, fg_color="transparent")
         ch.pack(fill="x", padx=14, pady=(12, 0))
-        ctk.CTkLabel(ch, text="Colector", font=F(13, "bold"), text_color=C["text"]).pack(side="left")
+        ctk.CTkLabel(ch, text=T("Colector"), font=F(13, "bold"), text_color=C["text"]).pack(side="left")
         self.col_count = ctk.CTkLabel(ch, text="0", font=F(11, "bold"), text_color="#ffffff", width=26, height=20,
                                       corner_radius=8, fg_color=C["surface2"])
         self.col_count.pack(side="right")
@@ -2262,9 +2289,9 @@ class App(ctk.CTk):
         self.col_label.pack(fill="x", padx=14, pady=(2, 8))
         cb = ctk.CTkFrame(col, fg_color="transparent")
         cb.pack(fill="x", padx=10, pady=(0, 12))
-        self.col_del = btn(cb, "Revisar y borrar", self._collector_review, "danger_solid", width=120)
+        self.col_del = btn(cb, T("Revisar y borrar"), self._collector_review, "danger_solid", width=120)
         self.col_del.pack(side="left", fill="x", expand=True)
-        self.col_view = btn(cb, "Vaciar", self._collector_clear, "ghost", width=60)
+        self.col_view = btn(cb, T("Vaciar"),self._collector_clear, "ghost", width=60)
         self.col_view.pack(side="left", padx=(6, 0))
 
         main = ctk.CTkFrame(self, fg_color=C["bg"], corner_radius=0)
@@ -2290,13 +2317,13 @@ class App(ctk.CTk):
         foot.grid_columnconfigure(1, weight=1)
         self.dot = ctk.CTkLabel(foot, text="●", font=F(11), text_color=C["ok"], width=14)
         self.dot.grid(row=0, column=0, padx=(2, 8))
-        self.status = ctk.CTkLabel(foot, text="Listo", anchor="w", font=F(12), text_color=C["muted"])
+        self.status = ctk.CTkLabel(foot, text=T("Listo"), anchor="w", font=F(12), text_color=C["muted"])
         self.status.grid(row=0, column=1, sticky="ew")
         self.progress = ctk.CTkProgressBar(foot, mode="determinate", width=200, height=4, corner_radius=2,
                                            fg_color=C["surface2"], progress_color=C["accent"])
         self.progress.set(0)
         self.progress.grid(row=0, column=2, padx=12)
-        self.cancel_btn = btn(foot, "Cancelar", self.cancel.set, "ghost", width=90)
+        self.cancel_btn = btn(foot, T("Cancelar"), self.cancel.set, "ghost", width=90)
         self.cancel_btn.grid(row=0, column=3)
         self.cancel_btn.grid_remove()
         self.progress.grid_remove()
@@ -2396,18 +2423,19 @@ class App(ctk.CTk):
         return row, info
 
     # ---------- diálogos ----------
-    def alert(self, text, title="Aviso", kind="info"):
-        Dialog.show(self, kind, title, text, [("Entendido", "primary", True)])
+    def alert(self, text, title=None, kind="info"):
+        Dialog.show(self, kind, T("Aviso") if title is None else title, text, [(T("Entendido"), "primary", True)])
 
-    def confirm(self, title, text, ok="Aceptar", danger=False):
+    def confirm(self, title, text, ok=None, danger=False):
+        ok = T("Aceptar") if ok is None else ok
         return Dialog.show(self, "danger" if danger else "ask", title, text,
-                           [("Cancelar", "secondary", False), (ok, "danger_solid" if danger else "primary", True)]
+                           [(T("Cancelar"), "secondary", False),(ok, "danger_solid" if danger else "primary", True)]
                            ) is True
 
     # ---------- tareas en segundo plano ----------
     def run_task(self, label, fn, done=None, on_error=None):
         if self.busy:
-            self.alert("Espera a que termine la tarea actual o cancélala.", "Tarea en curso")
+            self.alert(T("Espera a que termine la tarea actual o cancélala."), T("Tarea en curso"))
             return
         self.busy = True
         self.cancel.clear()
@@ -2453,11 +2481,11 @@ class App(ctk.CTk):
                         if on_error:
                             on_error()
                         self.dot.configure(text_color=C["bad"])
-                        self.set_status(f"Error: {err}")
-                        self.alert(f"Ha ocurrido un error:\n{err}", "Error", "error")
+                        self.set_status(T("Error: {err}", err=err))
+                        self.alert(T("Ha ocurrido un error:\n{err}", err=err), T("Error"), "error")
                     else:
                         self.dot.configure(text_color=C["warn"] if self.cancel.is_set() else C["ok"])
-                        self.set_status("Cancelado" if self.cancel.is_set() else "Listo")
+                        self.set_status(T("Cancelado") if self.cancel.is_set() else T("Listo"))
                         if done:
                             done(res)
         except queue.Empty:
@@ -2473,23 +2501,48 @@ class App(ctk.CTk):
     def after_delete(self, res: core.DeleteResult, permanent: bool = True):
         if permanent:
             core.add_freed(res.freed)
-        msg = f"{res.deleted:,} archivos borrados.".replace(",", ".")
+        msg = T("{n} archivos borrados.", n=num(res.deleted))
         if not permanent and res.freed:
-            msg += "\nEstán en la Papelera: el espacio se libera al vaciarla."
+            msg += "\n" + T("Están en la Papelera: el espacio se libera al vaciarla.")
         kind = "ok"
         if res.failed:
             kind = "warn"
-            msg += f"\n{res.failed} elementos no se pudieron borrar (estaban en uso o sin permisos)."
+            msg += "\n" + T("{n} elementos no se pudieron borrar (estaban en uso o sin permisos).", n=res.failed)
             if res.errors:
                 msg += "\n\n" + "\n".join(e if len(e) < 90 else "…" + e[-88:] for e in res.errors[:4])
-        Dialog.show(self, kind, f"Has liberado {human(res.freed)}", msg, [("Perfecto", "primary", True)])
+        Dialog.show(self, kind, T("Has liberado {size}", size=human(res.freed)), msg,
+                    [(T("Perfecto"), "primary", True)])
         self.refresh_summary()
 
     def _launch(self, target):
         try:
             core.launch(target)
         except Exception as e:  # noqa: BLE001
-            self.alert(str(e), "No se pudo abrir", "error")
+            self.alert(str(e), T("No se pudo abrir"), "error")
+
+    def _lang_menu(self):
+        b = self.lang_btn
+        items = [mi(name, lambda c=code: self._set_lang(c), "check" if code == i18n.LANG else "")
+                 for code, name in i18n.LANGS]
+        PopupMenu(self, items, b.winfo_rootx(), b.winfo_rooty() + b.winfo_height() + 4, title=T("Idioma"),
+                  min_width=200)
+
+    def _set_lang(self, code):
+        if code == i18n.LANG:
+            return
+        # el aviso sale ya en el idioma elegido
+        tt = i18n.texts(code)
+        if self.busy:
+            self.alert(tt("Espera a que termine la tarea actual o cancélala."), tt("Tarea en curso"))
+            return
+        if not Dialog.show(self, "ask", tt("Cambiar idioma"),
+                           tt("La app se reiniciará para mostrarse en {lang}.").format(lang=dict(i18n.LANGS)[code]),
+                           [(tt("Cancelar"), "secondary", False), (tt("Reiniciar"), "primary", True)]) is True:
+            return
+        i18n.set_lang(code)
+        if core.relaunch_self():
+            self.destroy()
+            os._exit(0)
 
     def _relaunch_admin(self):
         if core.relaunch_as_admin():
@@ -2499,8 +2552,8 @@ class App(ctk.CTk):
     # Resumen
     # =====================================================================
     def _build_summary(self, page):
-        actions = self.page_header(page, "Discos", "Estado de tus discos y por dónde empezar a liberar espacio")
-        btn(actions, "Actualizar", self.refresh_summary, "secondary", width=110).pack(side="right")
+        actions = self.page_header(page, T("Discos"), T("Estado de tus discos y por dónde empezar a liberar espacio"))
+        btn(actions, T("Actualizar"),self.refresh_summary, "secondary", width=110).pack(side="right")
         self.sum_body = ctk.CTkScrollableFrame(page, fg_color="transparent", scrollbar_button_color=C["scroll"],
                                                scrollbar_button_hover_color=C["scroll_h"])
         self.sum_body.pack(fill="both", expand=True)
@@ -2543,10 +2596,11 @@ class App(ctk.CTk):
             hero.grid_columnconfigure(1, weight=1)
             ring = Ring(hero, size=196, thickness=18)
             ring.grid(row=0, column=0, rowspan=4, padx=(30, 36), pady=28)
-            ring.draw(sysdrive.pct, f"{sysdrive.pct * 100:.0f}%", "en uso")
-            ctk.CTkLabel(hero, text=f"DISCO DEL SISTEMA  ·  {sysdrive.path}", font=F(11, "bold"),
+            ring.draw(sysdrive.pct, f"{sysdrive.pct * 100:.0f}%", T("en uso"))
+            ctk.CTkLabel(hero, text=T("DISCO DEL SISTEMA") + f"  ·  {sysdrive.path}", font=F(11, "bold"),
                          text_color=C["faint"]).grid(row=0, column=1, sticky="sw", pady=(36, 0))
-            big = ctk.CTkLabel(hero, text=f"{human(sysdrive.free)} libres", font=F(40, "bold"), text_color=C["text"])
+            big = ctk.CTkLabel(hero, text=T("{size} libres", size=human(sysdrive.free)), font=F(40, "bold"),
+                               text_color=C["text"])
             big.grid(row=1, column=1, sticky="w")
 
             def fit_big(_e=None, big=big, hero=hero):
@@ -2574,10 +2628,10 @@ class App(ctk.CTk):
             acts = ctk.CTkFrame(hero, fg_color="transparent")
             acts.grid(row=0, column=2, rowspan=4, padx=30)
             for text, cmd, kind, cap in (
-                    ("Limpiar temporales y cachés", lambda: (self.show("clean"), self.scan_categories()), "primary",
-                     "Calcula lo que se puede borrar sin riesgo"),
-                    ("Ver qué ocupa espacio", lambda p=sysdrive.path: self.start_scan(p), "secondary",
-                     "Mapa de todas las carpetas y archivos del disco")):
+                    (T("Limpiar temporales y cachés"), lambda: (self.show("clean"), self.scan_categories()), "primary",
+                     T("Calcula lo que se puede borrar sin riesgo")),
+                    (T("Ver qué ocupa espacio"), lambda p=sysdrive.path: self.start_scan(p), "secondary",
+                     T("Mapa de todas las carpetas y archivos del disco"))):
                 btn(acts, text, cmd, kind, width=250).pack(anchor="w", pady=(8, 0))
                 ctk.CTkLabel(acts, text=cap, font=F(11), text_color=C["muted"], height=18, anchor="w"
                              ).pack(anchor="w", padx=4, pady=(3, 6))
@@ -2585,45 +2639,45 @@ class App(ctk.CTk):
 
         freed, since = core.freed_stats()
         y, m, d = (since.split("-") + ["", "", ""])[:3]
-        months = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
         try:
-            since_txt = f"{int(d)} {months[int(m) - 1]} {y}"
+            since_txt = date_text(int(y), int(m), int(d))
         except (ValueError, IndexError):
             since_txt = since
         fb = ctk.CTkFrame(body, fg_color=C["surface"], corner_radius=14, border_width=1, border_color=C["border"])
         fb.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 14))
         ctk.CTkLabel(fb, text="✦", font=F(18, "bold"), text_color=C["accent"], width=24).pack(side="left", padx=(22, 8),
                                                                                              pady=16)
-        ctk.CTkLabel(fb, text=f"{human(freed)} liberados" if freed else "Aún no has liberado espacio",
+        ctk.CTkLabel(fb, text=T("{size} liberados", size=human(freed)) if freed else T("Aún no has liberado espacio"),
                      font=F(18, "bold"), text_color=C["text"]).pack(side="left")
-        ctk.CTkLabel(fb, text=f"con Desktop Free Space desde el {since_txt}", font=F(13), text_color=C["muted"]
-                     ).pack(side="left", padx=10)
+        ctk.CTkLabel(fb, text=T("con Desktop Free Space desde el {date}", date=since_txt), font=F(13),
+                     text_color=C["muted"]).pack(side="left", padx=10)
 
         size, n = core.recycle_bin_size()
-        self._tile(body, 0, "Papelera de reciclaje" if core.IS_WIN else "Papelera", human(size),
-                   f"{n} elementos · ocupan espacio hasta vaciarla", ("Vaciar", self._empty_bin) if size else None,
-                   "danger", dot=C["bad"])
+        self._tile(body, 0, T("Papelera de reciclaje") if core.IS_WIN else T("Papelera"), human(size),
+                   T("{n} elementos · ocupan espacio hasta vaciarla", n=num(n)),
+                   (T("Vaciar"), self._empty_bin) if size else None, "danger", dot=C["bad"])
         scanned = [c for c in self.categories if getattr(c, "_scanned", False)]
         if scanned:
             safe = sum(c.size for c in scanned if c.risk == core.SAFE)
             rev = sum(c.size for c in scanned if c.risk == core.REVIEW)
-            self._tile(body, 1, "Recuperable", human(safe + rev), f"{human(safe)} seguro · {human(rev)} a revisar",
-                       ("Ir a Limpieza", lambda: self.show("clean")), dot=C["ok"])
+            self._tile(body, 1, T("Recuperable"), human(safe + rev),
+                       T("{safe} seguro · {review} a revisar", safe=human(safe), review=human(rev)),
+                       (T("Ir a Limpieza"), lambda: self.show("clean")), dot=C["ok"])
         else:
-            self._tile(body, 1, "Recuperable", "—", "Temporales, cachés y modelos de IA sin calcular",
-                       ("Calcular", lambda: (self.show("clean"), self.scan_categories())), dot=C["ok"])
+            self._tile(body, 1, T("Recuperable"), "—", T("Temporales, cachés y modelos de IA sin calcular"),
+                       (T("Calcular"), lambda:(self.show("clean"), self.scan_categories())), dot=C["ok"])
         sysfiles = core.system_files_info()
         snaps = core.local_snapshots()
         sub = " · ".join(f"{os.path.basename(p)} {human(s)}" for _l, p, s, _t in sysfiles) or \
-            "Hibernación y memoria virtual"
+            T("Hibernación y memoria virtual")
         if snaps:
-            sub += f" · {len(snaps)} instantáneas locales de Time Machine"
-        self._tile(body, 2, "Archivos del sistema", human(sum(x[2] for x in sysfiles)) if sysfiles else "—", sub,
+            sub += " · " + T("{n} instantáneas locales de Time Machine", n=len(snaps))
+        self._tile(body, 2, T("Archivos del sistema"),human(sum(x[2] for x in sysfiles)) if sysfiles else "—", sub,
                    dot=C["accent2"])
         row = 3
         others = [d for d in drives if d is not sysdrive]
         if others:
-            ctk.CTkLabel(body, text="Otros discos", font=F(15, "bold"), text_color=C["text"]
+            ctk.CTkLabel(body, text=T("Otros discos"), font=F(15, "bold"), text_color=C["text"]
                          ).grid(row=row, column=0, sticky="w", pady=(6, 10))
             row += 1
             for d in others:
@@ -2641,29 +2695,29 @@ class App(ctk.CTk):
                 info.pack(side="right")
                 bar = self._bar(dc, d.pct, 8)
                 bar.grid(row=1, column=1, sticky="new", pady=(0, 16))
-                btn(dc, "Analizar", lambda p=d.path: self.start_scan(p), "secondary", width=100
+                btn(dc, T("Analizar"), lambda p=d.path: self.start_scan(p), "secondary", width=100
                     ).grid(row=0, column=2, rowspan=2, padx=18)
                 self._drive_rows.append((d.path, ring, None, bar, info, False))
                 row += 1
         tools = core.system_tools()
         if tools:
-            ctk.CTkLabel(body, text=f"Herramientas de {core.OS_NAME}", font=F(15, "bold"), text_color=C["text"]
-                         ).grid(row=row, column=0, sticky="w", pady=(10, 10))
+            ctk.CTkLabel(body, text=T("Herramientas de {os}", os=core.OS_NAME), font=F(15, "bold"),
+                         text_color=C["text"]).grid(row=row, column=0, sticky="w", pady=(10, 10))
             row += 1
         for i, (t1, t2, target) in enumerate(tools):
             t = card(body)
             t.grid(row=row, column=i, sticky="nsew", padx=(0 if i == 0 else 7, 0 if i == 2 else 7))
             ctk.CTkLabel(t, text=t1, font=F(13, "bold"), text_color=C["text"]).pack(anchor="w", padx=22, pady=(18, 0))
             ctk.CTkLabel(t, text=t2, font=F(12), text_color=C["muted"]).pack(anchor="w", padx=22)
-            btn(t, "Abrir  ↗", lambda x=target: self._launch(x), "ghost", width=80).pack(anchor="w", padx=12,
+            btn(t, T("Abrir") + "  ↗", lambda x=target: self._launch(x), "ghost", width=80).pack(anchor="w", padx=12,
                                                                                          pady=(6, 14))
         tips = [tip for _l, _p, _s, tip in sysfiles if "powercfg" in tip or "pmset" in tip]
         if snaps:
-            tips.append("macOS borra las instantáneas locales solo cuando falta espacio. Para quitarlas ya: "
-                        "tmutil deletelocalsnapshots /")
+            tips.append(T("macOS borra las instantáneas locales solo cuando falta espacio. Para quitarlas ya: {cmd}",
+                          cmd="tmutil deletelocalsnapshots /"))
         if tips:
             row += 1
-            ctk.CTkLabel(body, text="Consejo: " + tips[0], font=F(12), text_color=C["faint"]
+            ctk.CTkLabel(body, text=T("Consejo: {tip}", tip=tips[0]), font=F(12), text_color=C["faint"]
                          ).grid(row=row, column=0, columnspan=3, sticky="w", pady=(14, 0))
         self._live_drives(schedule_only=True)
 
@@ -2679,17 +2733,18 @@ class App(ctk.CTk):
                     if not ring.winfo_exists():
                         continue
                     if abs(pct - getattr(ring, "_pct", -1)) > 0.0005:
-                        ring.draw(pct, f"{pct * 100:.0f}%", "en uso" if is_sys else "")
+                        ring.draw(pct, f"{pct * 100:.0f}%", T("en uso") if is_sys else "")
                         ring._pct = pct
                     bar.set(pct)
                     bar.configure(progress_color=level_color(pct) if pct >= 0.75 else C["accent"])
                     if big is not None:
-                        big.configure(text=f"{human(u.free)} libres")
+                        big.configure(text=T("{size} libres", size=human(u.free)))
                         if hasattr(big, "_fit"):
                             big._fit()
-                        info.configure(text=f"Usado {human(u.used)}  ·  Capacidad {human(u.total)}")
+                        info.configure(text=T("Usado {used}  ·  Capacidad {total}", used=human(u.used),
+                                              total=human(u.total)))
                     else:
-                        info.configure(text=f"{human(u.free)} libres de {human(u.total)}")
+                        info.configure(text=T("{free} libres de {total}", free=human(u.free), total=human(u.total)))
                 except (OSError, tk.TclError):
                     pass
         else:
@@ -2699,8 +2754,9 @@ class App(ctk.CTk):
 
     def _empty_bin(self):
         size, n = core.recycle_bin_size()
-        if self.confirm("¿Vaciar la Papelera?", f"{human(size)} en {n} elementos. No se podrá recuperar.",
-                        "Vaciar", danger=True):
+        if self.confirm(T("¿Vaciar la Papelera?"),
+                        T("{size} en {n} elementos. No se podrá recuperar.", size=human(size), n=num(n)),
+                        T("Vaciar"), danger=True):
             core.empty_recycle_bin()
             after, _n = core.recycle_bin_size()
             core.add_freed(max(0, size - after))
@@ -2710,37 +2766,38 @@ class App(ctk.CTk):
     # Limpieza
     # =====================================================================
     def _build_clean(self, page):
-        actions = self.page_header(page, "Limpieza", "Temporales, cachés y modelos que se pueden borrar sin romper nada")
-        btn(actions, "Limpiar seleccionadas", self.clean_selected, "danger_solid", width=190).pack(side="right")
-        btn(actions, "Calcular espacio", self.scan_categories, "primary", width=150).pack(side="right", padx=8)
+        actions = self.page_header(page, T("Limpieza"),
+                                   T("Temporales, cachés y modelos que se pueden borrar sin romper nada"))
+        btn(actions, T("Limpiar seleccionadas"), self.clean_selected, "danger_solid", width=190).pack(side="right")
+        btn(actions, T("Calcular espacio"), self.scan_categories, "primary", width=150).pack(side="right", padx=8)
         bar = ctk.CTkFrame(page, fg_color="transparent")
         bar.pack(fill="x", pady=(0, 12))
         self.cat_filter = ctk.CTkSegmentedButton(
-            bar, values=["Todas", "Sistema", "Navegadores", "Desarrollo", "IA / Modelos"],
+            bar, values=[T("Todas"), T("Sistema"), T("Navegadores"), T("Desarrollo"), T("IA / Modelos")],
             command=lambda _v: self._fill_categories(), font=F(12, "bold"), height=34, corner_radius=8,
             fg_color=C["surface"], selected_color=C["accent"], selected_hover_color=C["accent_h"],
             unselected_color=C["surface"], unselected_hover_color=C["hover"], text_color=C["text"])
-        self.cat_filter.set("Todas")
+        self.cat_filter.set(T("Todas"))
         self.cat_filter.pack(side="left")
-        btn(bar, "Marcar las seguras", self._check_safe, "ghost", width=150).pack(side="left", padx=(12, 0))
-        btn(bar, "Desmarcar", lambda: self.cat_table.check_all(False), "ghost", width=100).pack(side="left")
+        btn(bar, T("Marcar las seguras"), self._check_safe, "ghost", width=150).pack(side="left", padx=(12, 0))
+        btn(bar, T("Desmarcar"), lambda: self.cat_table.check_all(False), "ghost", width=100).pack(side="left")
         self.cat_total = ctk.CTkLabel(bar, text="", font=F(13, "bold"), text_color=C["accent"])
         self.cat_total.pack(side="right")
-        self.cat_table = Table(page, [("name", "CATEGORÍA", 360, "w"), ("group", "GRUPO", 130, "w"),
-                                      ("size", "TAMAÑO", 110, "e"), ("files", "ARCHIVOS", 100, "e"),
-                                      ("risk", "NIVEL", 110, "center")],
+        self.cat_table = Table(page, [("name", T("CATEGORÍA"), 360, "w"), ("group", T("GRUPO"), 130, "w"),
+                                      ("size", T("TAMAÑO"), 110, "e"), ("files", T("ARCHIVOS"), 100, "e"),
+                                      ("risk", T("NIVEL"), 110, "center")],
                                checkable=True, height=13, on_select=self._show_cat)
         self.cat_table.pack(fill="both", expand=True)
         self.cat_table.bind("<<CheckChanged>>", lambda e: self._update_cat_total())
-        self.cat_table.context_menu([mi("Ver qué se borraría", self._preview_cat, "search"),
-                                     mi("Abrir carpeta", self._open_cat, "open")])
+        self.cat_table.context_menu([mi(T("Ver qué se borraría"), self._preview_cat, "search"),
+                                     mi(T("Abrir carpeta"), self._open_cat, "open")])
         det = card(page)
         det.pack(fill="x", pady=(12, 0))
-        self.cat_title = ctk.CTkLabel(det, text="Pulsa «Calcular espacio» para empezar", font=F(14, "bold"),
+        self.cat_title = ctk.CTkLabel(det, text=T("Pulsa «Calcular espacio» para empezar"), font=F(14, "bold"),
                                       text_color=C["text"], anchor="w")
         self.cat_title.pack(fill="x", padx=22, pady=(16, 0))
-        self.cat_detail = ctk.CTkLabel(det, text="«Seguro»: se regenera solo.   «Revisar»: tendrías que volver a "
-                                                 "descargarlo.   Selecciona una fila para ver qué contiene.",
+        self.cat_detail = ctk.CTkLabel(det, text=T("«Seguro»: se regenera solo.   «Revisar»: tendrías que volver a "
+                                                   "descargarlo.   Selecciona una fila para ver qué contiene."),
                                        font=F(12), text_color=C["muted"], anchor="w", justify="left", wraplength=1000)
         self.cat_detail.pack(fill="x", padx=22, pady=(2, 16))
         self._fill_categories()
@@ -2750,39 +2807,39 @@ class App(ctk.CTk):
         keep = set(t.checked)
         t.clear()
         grp = self.cat_filter.get()
-        cats = [c for c in self.categories if grp == "Todas" or c.group == grp]
+        cats = [c for c in self.categories if grp == T("Todas") or c.group == grp]
         if any(getattr(c, "_scanned", False) for c in cats):
             cats.sort(key=lambda c: c.size, reverse=True)
         for c in cats:
             scanned = getattr(c, "_scanned", False)
             tags = ("muted",) if scanned and c.size == 0 else ("warn",) if c.risk == core.REVIEW else ()
             t.add(c.id, [c.name, c.group, human(c.size) if scanned else "—",
-                         f"{c.files:,}".replace(",", ".") if scanned else "",
-                         "●  Seguro" if c.risk == core.SAFE else "●  Revisar"],
+                         num(c.files) if scanned else "",
+                         "●  " + (T("Seguro") if c.risk == core.SAFE else T("Revisar"))],
                   obj=c, sort={"size": c.size, "files": c.files}, tags=tags, checked=c.id in keep)
         self._update_cat_total()
 
     def _update_cat_total(self):
         sel = [c for c in self.categories if c.id in self.cat_table.checked]
-        self.cat_total.configure(text=f"Seleccionado: {human(sum(c.size for c in sel))}" if sel else "")
+        self.cat_total.configure(text=T("Seleccionado: {size}", size=human(sum(c.size for c in sel))) if sel else "")
 
     def _show_cat(self, c):
         if not c:
             return
         extra = []
         if c.admin and not core.is_admin():
-            extra.append("Necesita ejecutar la app como administrador.")
+            extra.append(T("Necesita ejecutar la app como administrador."))
         if c.close_apps:
-            extra.append(f"Cierra {c.close_apps} antes de limpiar.")
+            extra.append(T("Cierra {apps} antes de limpiar.", apps=c.close_apps))
         if c.risk == core.REVIEW:
-            extra.append("Revisa antes de borrar: tendrías que volver a descargarlo.")
-        where = "   ·   ".join(c.targets[:3]) if c.targets else "No existe en este PC o falta calcular."
+            extra.append(T("Revisa antes de borrar: tendrías que volver a descargarlo."))
+        where = "   ·   ".join(c.targets[:3]) if c.targets else T("No existe en este PC o falta calcular.")
         self.cat_title.configure(text=c.name + (f"  ·  {human(c.size)}" if getattr(c, "_scanned", False) else ""))
         self.cat_detail.configure(text=f"{c.description} {' '.join(extra)}\n{where}")
 
     def _check_safe(self):
         if not any(getattr(c, "_scanned", False) for c in self.categories):
-            self.alert("Primero pulsa «Calcular espacio».")
+            self.alert(T("Primero pulsa «Calcular espacio»."))
             return
         for c in self.categories:
             if self.cat_table.tv.exists(c.id):
@@ -2797,19 +2854,19 @@ class App(ctk.CTk):
             for c in cats:
                 if self.cancel.is_set():
                     break
-                report(f"Calculando {c.name}…")
+                report(T("Calculando {name}…", name=c.name))
                 core.scan_category(c, self.cancel)
                 c._scanned = True  # type: ignore[attr-defined]
             return cats
 
         def done(_):
             self._fill_categories()
-            self.cat_title.configure(text="Marca lo que quieras limpiar y pulsa «Limpiar seleccionadas»")
+            self.cat_title.configure(text=T("Marca lo que quieras limpiar y pulsa «Limpiar seleccionadas»"))
             total = sum(c.size for c in cats)
             safe = sum(c.size for c in cats if c.risk == core.SAFE)
-            self.set_status(f"Recuperable: {human(total)} · seguro: {human(safe)}")
+            self.set_status(T("Recuperable: {total} · seguro: {safe}", total=human(total), safe=human(safe)))
             self.refresh_summary()
-        self.run_task("Calculando categorías…", work, done)
+        self.run_task(T("Calculando categorías…"), work, done)
 
     def _open_cat(self):
         c = self.cat_table.focused()
@@ -2830,44 +2887,45 @@ class App(ctk.CTk):
             for p in c.items()[:5000]:
                 if self.cancel.is_set():
                     break
-                report(f"Midiendo {p}")
+                report(T("Midiendo {path}", path=p))
                 items.append((p, core.dir_size(p, self.cancel)[0]))
             items.sort(key=lambda x: x[1], reverse=True)
             return items
 
         def done(items):
             d = Dialog(self, c.name, width=840, height=580)
-            d.header("info", c.name, f"{len(items)} elementos · {human(sum(s for _, s in items))}")
-            d.buttons([("Cerrar", "primary", None)])
+            d.header("info", c.name, T("{n} elementos · {size}", n=num(len(items)),
+                                         size=human(sum(s for _, s in items))))
+            d.buttons([(T("Cerrar"), "primary", None)])
             box = ctk.CTkTextbox(d.body, font=ctk.CTkFont(family=MONO_FONT, size=12), fg_color=C["bg"],
                                  text_color=C["muted"], border_width=1, border_color=C["border"], corner_radius=8)
             box.pack(fill="both", expand=True, padx=24, pady=12)
             for p, s in items:
                 box.insert("end", f"{human(s):>10}   {p}\n")
             if not items:
-                box.insert("end", "No hay nada que borrar aquí.")
+                box.insert("end", T("No hay nada que borrar aquí."))
             box.configure(state="disabled")
-        self.run_task(f"Revisando {c.name}…", work, done)
+        self.run_task(T("Revisando {name}…", name=c.name), work, done)
 
     def clean_selected(self):
         cats = [c for c in self.categories if c.id in self.cat_table.checked]
         if not cats:
-            self.alert("Marca al menos una categoría haciendo clic en su casilla.", "Nada seleccionado")
+            self.alert(T("Marca al menos una categoría haciendo clic en su casilla."), T("Nada seleccionado"))
             return
         if any(not getattr(c, "_scanned", False) for c in cats):
-            self.alert("Primero pulsa «Calcular espacio».")
+            self.alert(T("Primero pulsa «Calcular espacio»."))
             return
         need_admin = [c.name for c in cats if c.admin and not core.is_admin()]
         items = [(f"[{c.name}]  {t}", c.target_sizes.get(t, 0)) for c in cats for t in c.targets]
-        note = "Se borra el contenido de estas carpetas. Lo que esté en uso se salta."
+        note = T("Se borra el contenido de estas carpetas. Lo que esté en uso se salta.")
         apps = sorted({c.close_apps for c in cats if c.close_apps})
         if apps:
-            note += f" Cierra antes: {', '.join(apps)}."
+            note += " " + T("Cierra antes: {apps}.", apps=", ".join(apps))
         if need_admin:
-            note += f"\nSin permisos de administrador no se limpiará: {', '.join(need_admin)}."
+            note += "\n" + T("Sin permisos de administrador no se limpiará: {names}.", names=", ".join(need_admin))
         if any(c.risk == core.REVIEW for c in cats):
-            note += "\nIncluye categorías «Revisar»: tendrías que volver a descargarlas."
-        perm = ConfirmDelete.ask(self, "Confirmar limpieza", items, note, default_permanent=True)
+            note += "\n" + T("Incluye categorías «Revisar»: tendrías que volver a descargarlas.")
+        perm = ConfirmDelete.ask(self, T("Confirmar limpieza"), items, note, default_permanent=True)
         if perm is None:
             return
 
@@ -2876,7 +2934,7 @@ class App(ctk.CTk):
             for c in cats:
                 if self.cancel.is_set():
                     break
-                report(f"Limpiando {c.name}…")
+                report(T("Limpiando {name}…", name=c.name))
                 total.merge(core.clean_category(c, perm))
                 core.scan_category(c)
             return total
@@ -2884,13 +2942,14 @@ class App(ctk.CTk):
         def done(res):
             self._fill_categories()
             self.after_delete(res, perm)
-        self.run_task("Limpiando…", work, done)
+        self.run_task(T("Limpiando…"), work, done)
 
     # =====================================================================
     # Mapa del disco (sunburst + lista + migas de pan)
     # =====================================================================
     def _build_analyzer(self, page):
-        actions = self.page_header(page, "Mapa del disco", "Pasa el ratón por los anillos y haz clic para entrar en una carpeta")
+        actions = self.page_header(page, T("Mapa del disco"),
+                                   T("Pasa el ratón por los anillos y haz clic para entrar en una carpeta"))
         self.scan_info = ctk.CTkLabel(actions, text="", font=F(13, "bold"), text_color=C["accent"])
         self.scan_info.pack(side="right")
         bar = card(page)
@@ -2901,9 +2960,9 @@ class App(ctk.CTk):
                                       border_color=C["border"], text_color=C["text"])
         self.scan_path.insert(0, core.SYSDRIVE if core.IS_WIN else core.HOME)
         self.scan_path.pack(side="left", fill="x", expand=True)
-        btn(inner, "Examinar…", self._pick_folder, "secondary", width=110).pack(side="left", padx=8)
-        btn(inner, "Mi usuario", lambda: self.start_scan(core.HOME), "secondary", width=110).pack(side="left")
-        btn(inner, "Analizar", lambda: self.start_scan(self.scan_path.get()), "primary", width=120
+        btn(inner, T("Examinar…"), self._pick_folder, "secondary", width=110).pack(side="left", padx=8)
+        btn(inner, T("Mi usuario"), lambda: self.start_scan(core.HOME), "secondary", width=110).pack(side="left")
+        btn(inner, T("Analizar"), lambda: self.start_scan(self.scan_path.get()), "primary", width=120
             ).pack(side="left", padx=(8, 0))
 
         body = ctk.CTkFrame(page, fg_color="transparent")
@@ -2920,8 +2979,8 @@ class App(ctk.CTk):
         self.sun.on_scan_text = lambda t: self.map_hover.configure(text=t, text_color=C["muted"])
         self.sun.is_shown = lambda: getattr(self, "_page", None) == "analyzer" and self.state() != "iconic"
         self.sun.pack(fill="both", expand=True, padx=10, pady=10)
-        self.map_hover = ctk.CTkLabel(mcard, text="Clic en un anillo para entrar · clic en el centro para subir · "
-                                                  "arrastra al Colector", font=F(12), text_color=C["faint"],
+        self.map_hover = ctk.CTkLabel(mcard, text=T("Clic en un anillo para entrar · clic en el centro para subir · "
+                                                    "arrastra al Colector"), font=F(12), text_color=C["faint"],
                                       anchor="w", width=1)  # el texto (rutas largas) no empuja la maquetación
         self.map_hover.pack(fill="x", padx=16, pady=(0, 12))
 
@@ -2929,23 +2988,25 @@ class App(ctk.CTk):
         side.grid(row=0, column=1, sticky="nsew")
         hdr = ctk.CTkFrame(side, fg_color="transparent")
         hdr.pack(fill="x", pady=(0, 8))
-        self.map_title = ctk.CTkLabel(hdr, text="Contenido", font=F(15, "bold"), text_color=C["text"], anchor="w")
+        self.map_title = ctk.CTkLabel(hdr, text=T("Contenido"), font=F(15, "bold"), text_color=C["text"], anchor="w")
         self.map_title.pack(side="left")
-        btn(hdr, "↑ Subir", lambda: self.sun.up(), "ghost", width=80).pack(side="right")
-        self.map_list = Table(side, [("name", "NOMBRE", 200, "w"), ("pct", "%", 64, "e"),
-                                     ("size", "TAMAÑO", 96, "e")],
+        btn(hdr, "↑ " + T("Subir"), lambda: self.sun.up(), "ghost", width=80).pack(side="right")
+        self.map_list = Table(side, [("name", T("NOMBRE"), 200, "w"), ("pct", "%", 64, "e"),
+                                     ("size", T("TAMAÑO"), 96, "e")],
                               height=14, on_open=self._map_open_row, icons=True,
                               empty=self._map_empty())
         self.map_list.pack(fill="both", expand=True)
         ml = self.map_list
-        self.map_list.context_menu([mi("Entrar / abrir", lambda: self._map_open_row(ml.focused()), "enter", "Doble clic"),
-                                    mi("Vista previa", lambda: self.preview(ml.focused()), "eye", "Espacio"),
+        self.map_list.context_menu([mi(T("Entrar / abrir"), lambda: self._map_open_row(ml.focused()), "enter",
+                                       T("Doble clic")),
+                                    mi(T("Vista previa"), lambda: self.preview(ml.focused()), "eye", T("Espacio")),
                                     SEP,
-                                    mi("Añadir al Colector", lambda: self._collect_nodes(ml.selected()), "add"),
-                                    mi("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(ml.focused()), "open"),
-                                    mi("Copiar ruta", lambda: self._copy_path(ml.focused()), "copy"),
+                                    mi(T("Añadir al Colector"), lambda: self._collect_nodes(ml.selected()), "add"),
+                                    mi(T("Mostrar en el {fm}", fm=FILE_MANAGER), lambda: self._open_node(ml.focused()),
+                                       "open"),
+                                    mi(T("Copiar ruta"), lambda: self._copy_path(ml.focused()), "copy"),
                                     SEP,
-                                    mi("Borrar…", lambda: self._delete_nodes(ml.selected()), "trash", "Supr",
+                                    mi(T("Borrar…"), lambda: self._delete_nodes(ml.selected()), "trash", T("Supr"),
                                        danger=True)])
         self.map_list.tv.bind("<Delete>", lambda e: self._delete_nodes(ml.selected()))
         self.map_list.tv.bind("<space>", lambda e: (self.preview(self.map_list.focused()), "break")[1])
@@ -2953,16 +3014,16 @@ class App(ctk.CTk):
         self.map_list.enable_drag(self._table_drag)
         acts = ctk.CTkFrame(side, fg_color="transparent")
         acts.pack(fill="x", pady=(10, 0))
-        btn(acts, "Añadir al Colector", lambda: self._collect_nodes(self.map_list.selected()), "primary"
+        btn(acts, T("Añadir al Colector"), lambda: self._collect_nodes(self.map_list.selected()), "primary"
             ).pack(side="left")
-        btn(acts, "Vista previa", lambda: self.preview(self.map_list.focused()), "secondary", width=110
+        btn(acts, T("Vista previa"), lambda: self.preview(self.map_list.focused()), "secondary", width=110
             ).pack(side="left", padx=8)
-        btn(acts, "Exportar CSV", self._export_csv, "ghost", width=110).pack(side="right")
+        btn(acts, T("Exportar CSV"), self._export_csv, "ghost", width=110).pack(side="right")
 
     def _map_empty(self):
-        return ("map", "Todavía no hay mapa",
-                "Analiza un disco o una carpeta para ver de un vistazo qué ocupa tu espacio.",
-                ("Analizar ahora", lambda: self.start_scan(self.scan_path.get())))
+        return ("map", T("Todavía no hay mapa"),
+                T("Analiza un disco o una carpeta para ver de un vistazo qué ocupa tu espacio."),
+                (T("Analizar ahora"), lambda: self.start_scan(self.scan_path.get())))
 
     def _pick_folder(self):
         d = filedialog.askdirectory(initialdir=self.scan_path.get() or core.HOME)
@@ -2975,23 +3036,24 @@ class App(ctk.CTk):
         if core.IS_WIN and len(path) == 2 and path[1] == ":":
             path += "\\"
         if not os.path.isdir(path):
-            self.alert(f"No existe la carpeta:\n{path}", "Carpeta no encontrada", "error")
+            self.alert(T("No existe la carpeta:\n{path}", path=path), T("Carpeta no encontrada"), "error")
             return
         if self.busy:
-            self.alert("Espera a que termine la tarea actual o cancélala.", "Tarea en curso")
+            self.alert(T("Espera a que termine la tarea actual o cancélala."), T("Tarea en curso"))
             return
         self.scan_path.delete(0, "end")
         self.scan_path.insert(0, path)
         self.show("analyzer")
         self.map_list.clear()
-        self.map_list.set_empty("search", "Analizando…",
-                                "El contenido aparecerá aquí, ordenado por tamaño, en cuanto termine el análisis.")
+        self.map_list.set_empty(
+            "search", T("Analizando…"),
+            T("El contenido aparecerá aquí, ordenado por tamaño, en cuanto termine el análisis."))
         self.sun.start_scanning(path)
 
         def work(report):
             def prog(n, b, p):
                 self.q.put(("scan", (n, b, p)))
-                report(f"Analizando · {n:,} archivos".replace(",", ".") + f" · {human(b)} · {p}")
+                report(T("Analizando · {n} archivos", n=num(n)) + f" · {human(b)} · {p}")
             return core.scan_tree(path, self.cancel, prog)
 
         def done(res: core.ScanResult | None):
@@ -3015,11 +3077,11 @@ class App(ctk.CTk):
             self._fill_kinds()
             self.dup_table.clear()
             r = res.root
-            txt = f"{human(r.size)} en {r.files:,} archivos".replace(",", ".")
+            txt = T("{size} en {n} archivos", size=human(r.size), n=num(r.files))
             if hidden:
-                txt += f"  ·  {human(hidden)} ocultos"
-            self.scan_info.configure(text=txt + (" (parcial)" if self.cancel.is_set() else ""))
-        self.run_task(f"Analizando {path}…", work, done, on_error=lambda: (self.sun.stop_scanning(),
+                txt += "  ·  " + T("{size} ocultos", size=human(hidden))
+            self.scan_info.configure(text=txt + (" " + T("(parcial)") if self.cancel.is_set() else ""))
+        self.run_task(T("Analizando {path}…", path=path), work, done, on_error=lambda: (self.sun.stop_scanning(),
                                                                             self._map_hover(None),
                                                                             self.map_list.set_empty(
                                                                                 *self._map_empty()),
@@ -3054,9 +3116,9 @@ class App(ctk.CTk):
         rows = [(c.size, c.name, c) for c in node.children[:500]] + [(f.size, f.name, f) for f in node.top_files]
         loose = core.loose_bytes(node)
         if loose:
-            rows.append((loose, "(archivos pequeños)", None))
+            rows.append((loose, T("(archivos pequeños)"), None))
         if hidden:
-            rows.append((hidden, "(espacio oculto: sistema, sin permisos…)", "hidden"))
+            rows.append((hidden, T("(espacio oculto: sistema, sin permisos…)"), "hidden"))
         rows.sort(key=lambda r: r[0], reverse=True)
         # mismo color que su sector en el mapa: la lista y los anillos se leen juntos
         colors = {id(s[3]): s[4] for s in self.sun.segs if s[0] == 1 and s[3] is not None}
@@ -3081,8 +3143,8 @@ class App(ctk.CTk):
                 self.map_list.tv.selection_set(node.path)
                 self.map_list.tv.see(node.path)
         else:
-            self.map_hover.configure(text="Clic en un anillo para entrar · clic en el centro para subir · "
-                                          "arrastra al Colector", text_color=C["faint"])
+            self.map_hover.configure(text=T("Clic en un anillo para entrar · clic en el centro para subir · "
+                                            "arrastra al Colector"), text_color=C["faint"])
 
     def _map_open_row(self, node):
         if isinstance(node, core.Node) and not node.is_file and (node.children or node.top_files):
@@ -3093,17 +3155,17 @@ class App(ctk.CTk):
     def _map_menu(self, node, e):
         items = []
         if not node.is_file and (node.children or node.top_files):
-            items.append(mi("Entrar", lambda: self.sun.set_root(node), "enter", "Clic"))
-        items += [mi("Vista previa", lambda: self.preview(node), "eye"),
+            items.append(mi(T("Entrar"), lambda: self.sun.set_root(node), "enter", T("Clic")))
+        items += [mi(T("Vista previa"), lambda: self.preview(node), "eye"),
                   SEP,
-                  mi("Añadir al Colector", lambda: self._collect_nodes([node]), "add"),
-                  mi("Mostrar en el " + FILE_MANAGER, lambda: core.open_in_explorer(node.path), "open"),
-                  mi("Copiar ruta", lambda: self._copy_path(node), "copy"),
+                  mi(T("Añadir al Colector"), lambda: self._collect_nodes([node]), "add"),
+                  mi(T("Mostrar en el {fm}", fm=FILE_MANAGER), lambda: core.open_in_explorer(node.path), "open"),
+                  mi(T("Copiar ruta"), lambda: self._copy_path(node), "copy"),
                   SEP,
-                  mi("Borrar…", lambda: self._delete_nodes([node]), "trash", danger=True)]
+                  mi(T("Borrar…"), lambda: self._delete_nodes([node]), "trash", danger=True)]
         name = node.name if len(node.name) <= 42 else node.name[:40] + "…"
         PopupMenu(self, items, e.x_root, e.y_root, title=name,
-                  subtitle=human(node.size) + ("  ·  archivo" if node.is_file else "  ·  carpeta"))
+                  subtitle=human(node.size) + "  ·  " + (T("archivo") if node.is_file else T("carpeta")))
 
     def _open_node(self, node):
         if node is not None:
@@ -3116,7 +3178,7 @@ class App(ctk.CTk):
         path = node.path if isinstance(node, core.Node) else node[1] if isinstance(node, tuple) else str(node)
         self.clipboard_clear()
         self.clipboard_append(path)
-        self.set_status("Ruta copiada")
+        self.set_status(T("Ruta copiada"))
 
     def _delete_nodes(self, nodes):
         nodes = [n for n in nodes if isinstance(n, core.Node)]
@@ -3176,7 +3238,7 @@ class App(ctk.CTk):
             g.configure(bg=C["accent"])
             total = sum(s for _, s in items)
             name = os.path.basename(items[0][0].rstrip("\\/")) or items[0][0]
-            txt = name if len(items) == 1 else f"{len(items)} elementos"
+            txt = name if len(items) == 1 else T("{n} elementos", n=num(len(items)))
             tk.Label(g, text=f"  {txt}  ·  {human(total)}  ", bg=C["accent"], fg="#ffffff",
                      font=(UI_FONT, 10, "bold"), padx=6, pady=5).pack()
             self._ghost = g
@@ -3222,13 +3284,13 @@ class App(ctk.CTk):
             st, when = None, ""
         is_dir = os.path.isdir(path)
         ext = os.path.splitext(path)[1].lower().lstrip(".")
-        kind = "Carpeta" if is_dir else core.kind_of(ext) + (f" · .{ext}" if ext else "")
+        kind = T("Carpeta") if is_dir else core.kind_of(ext) + (f" · .{ext}" if ext else "")
         d = Dialog(self, name, width=800, height=600)
         d.minsize(600, 420)
-        d.header("info", name, f"{kind}  ·  {human(size)}" + (f"  ·  modificado {when}" if when else "") +
-                 f"\n{path}")
-        d.buttons([("Mostrar en el " + FILE_MANAGER, "secondary", "show"), ("Al Colector", "secondary", "collect"),
-                   ("Cerrar", "primary", None)])
+        d.header("info", name, f"{kind}  ·  {human(size)}" +
+                 ("  ·  " + T("modificado {date}", date=when) if when else "") + f"\n{path}")
+        d.buttons([(T("Mostrar en el {fm}", fm=FILE_MANAGER), "secondary", "show"),
+                   (T("Al Colector"), "secondary", "collect"), (T("Cerrar"), "primary", None)])
         box = ctk.CTkFrame(d.body, fg_color=C["bg"], corner_radius=12, border_width=1, border_color=C["border"])
         box.pack(fill="both", expand=True, padx=24, pady=12)
         shown = False
@@ -3270,7 +3332,7 @@ class App(ctk.CTk):
                 bar.pack(fill="x", padx=16, pady=(2, 0))
             shown = bool(items)
         if not shown:
-            ctk.CTkLabel(box, text="Sin vista previa para este tipo de archivo", font=F(13),
+            ctk.CTkLabel(box, text=T("Sin vista previa para este tipo de archivo"), font=F(13),
                          text_color=C["faint"]).pack(expand=True)
         self.wait_window(d)
         if d.result == "show":
@@ -3280,13 +3342,13 @@ class App(ctk.CTk):
 
     def _export_csv(self):
         if not self.scan_result:
-            self.alert("Primero analiza un disco o una carpeta.")
+            self.alert(T("Primero analiza un disco o una carpeta."))
             return
         path = filedialog.asksaveasfilename(defaultextension=".csv", initialfile="pc-free-space.csv",
                                             filetypes=[("CSV", "*.csv")])
         if path:
             core.export_csv(self.scan_result, path)
-            self.set_status(f"Exportado: {path}")
+            self.set_status(T("Exportado: {path}", path=path))
 
     # =====================================================================
     # Colector (cesta de elementos para borrar de una vez)
@@ -3299,7 +3361,7 @@ class App(ctk.CTk):
                 added += 1
         self._update_collector()
         if added:
-            self.set_status(f"Añadido al Colector: {added} elemento(s)")
+            self.set_status(T("Añadido al Colector: {n} elemento(s)", n=num(added)))
 
     def _collect_nodes(self, nodes):
         self._collect([(n.path, n.size) for n in nodes if isinstance(n, core.Node)])
@@ -3309,19 +3371,20 @@ class App(ctk.CTk):
         if not objs and checked:
             objs = [o for o in table.selected() if o]
         if not objs:
-            self.alert("Marca o selecciona primero algún elemento.", "Nada seleccionado")
+            self.alert(T("Marca o selecciona primero algún elemento."), T("Nada seleccionado"))
             return
         self._collect([(p, s) for s, p in objs])
 
     def _update_collector(self):
         n = len(self.collector)
         total = sum(self.collector.values())
-        self.col_label.configure(text=f"{n} elementos · {human(total)}" if n else
-                                 "Arrastra aquí carpetas y archivos desde el mapa o las listas")
+        self.col_label.configure(text=T("{n} elementos · {size}", n=num(n), size=human(total)) if n else
+                                 T("Arrastra aquí carpetas y archivos desde el mapa o las listas"))
         self.col_count.configure(text=str(n), fg_color=C["accent"] if n else C["surface2"])
         state = "normal" if n else "disabled"
-        self.col_del.configure(state=state, fg_color=C["bad_h"] if n else C["bad_off"])
-        self.col_view.configure(state=state)
+        self.col_del.configure(state=state, fg_color=C["bad_h"] if n else C["surface2"],
+                               text_color_disabled=C["faint"])
+        self.col_view.configure(state=state, text_color_disabled=C["faint"])
 
     def _collector_review(self):
         if not self.collector:
@@ -3345,22 +3408,23 @@ class App(ctk.CTk):
     # Tipos de archivo
     # =====================================================================
     def _build_kinds(self, page):
-        self.page_header(page, "Tipos de archivo", "Qué clase de archivos ocupa tu espacio, según el último análisis")
+        self.page_header(page, T("Tipos de archivo"),
+                         T("Qué clase de archivos ocupa tu espacio, según el último análisis"))
         top = card(page)
         top.pack(fill="x", pady=(0, 12))
         self.kind_box = ctk.CTkFrame(top, fg_color="transparent")
         self.kind_box.pack(fill="x", padx=20, pady=18)
         self._kinds_placeholder()
-        self.section(page, "Extensiones que más ocupan")
-        self.ext_table = Table(page, [("name", "EXTENSIÓN", 160, "w"), ("kind", "TIPO", 220, "w"),
-                                      ("size", "TAMAÑO", 110, "e"), ("files", "ARCHIVOS", 110, "e"),
-                                      ("pct", "% DEL TOTAL", 110, "e")], height=7,
-                               empty=("list", "Sin datos todavía",
-                                      "Analiza un disco o una carpeta y aquí verás qué extensiones ocupan más.",
-                                      ("Ir al Mapa del disco", lambda: self.show("analyzer"))),
+        self.section(page, T("Extensiones que más ocupan"))
+        self.ext_table = Table(page, [("name", T("EXTENSIÓN"), 160, "w"), ("kind", T("TIPO"), 220, "w"),
+                                      ("size", T("TAMAÑO"), 110, "e"), ("files", T("ARCHIVOS"), 110, "e"),
+                                      ("pct", T("% DEL TOTAL"), 110, "e")], height=7,
+                               empty=("list", T("Sin datos todavía"),
+                                      T("Analiza un disco o una carpeta y aquí verás qué extensiones ocupan más."),
+                                      (T("Ir al Mapa del disco"), lambda: self.show("analyzer"))),
                                on_open=lambda ext: self._show_ext(ext))
         self.ext_table.pack(fill="both", expand=True)
-        self.hint(page, "Doble clic en una extensión para ver sus archivos más grandes.")
+        self.hint(page, T("Doble clic en una extensión para ver sus archivos más grandes."))
 
     def _kinds_placeholder(self):
         """Barra apilada «fantasma» mientras no hay análisis: anticipa lo que aparecerá."""
@@ -3375,8 +3439,8 @@ class App(ctk.CTk):
         row = ctk.CTkFrame(ph, fg_color="transparent")
         row.pack(fill="x")
         ctk.CTkLabel(row, text=icon("info"), font=IF(14), text_color=C["faint"]).pack(side="left", padx=(2, 10))
-        ctk.CTkLabel(row, text="Aquí verás el reparto por tipo de archivo (vídeos, programas, código…) "
-                               "en cuanto analices un disco o una carpeta.", font=F(12),
+        ctk.CTkLabel(row, text=T("Aquí verás el reparto por tipo de archivo (vídeos, programas, código…) "
+                                 "en cuanto analices un disco o una carpeta."), font=F(12),
                      text_color=C["muted"]).pack(side="left")
 
     def _fill_kinds(self):
@@ -3417,8 +3481,8 @@ class App(ctk.CTk):
                          ).pack(side="right")
         exts = sorted(res.ext_stats.items(), key=lambda x: x[1][0], reverse=True)[:300]
         for ext, (b, n) in exts:
-            label = "." + ext if ext else "(sin extensión)"
-            self.ext_table.add("ext:" + ext, [label, core.kind_of(ext), human(b), f"{n:,}".replace(",", "."),
+            label = "." + ext if ext else T("(sin extensión)")
+            self.ext_table.add("ext:" + ext, [label, core.kind_of(ext), human(b), num(n),
                                               f"{b / total * 100:.1f} %"], obj=ext,
                                sort={"size": b, "files": n, "pct": b})
 
@@ -3427,7 +3491,7 @@ class App(ctk.CTk):
             return
         self.show("big")
         self.min_size.set("50 MB")
-        self.age_filter.set("Cualquiera")
+        self.age_filter.set(self._ages[0][0])
         self.ext_filter.delete(0, "end")
         self.ext_filter.insert(0, "." + ext if ext else "")
         self._fill_bigfiles()
@@ -3436,43 +3500,44 @@ class App(ctk.CTk):
     # Duplicados
     # =====================================================================
     def _build_dups(self, page):
-        actions = self.page_header(page, "Duplicados", "Archivos idénticos (mismo contenido) dentro del último análisis")
-        btn(actions, "Añadir marcados al Colector", lambda: self._collect_dups(), "secondary", width=220
+        actions = self.page_header(page, T("Duplicados"),
+                                   T("Archivos idénticos (mismo contenido) dentro del último análisis"))
+        btn(actions, T("Añadir marcados al Colector"), lambda: self._collect_dups(), "secondary", width=220
             ).pack(side="right")
-        btn(actions, "Buscar duplicados", self.find_dups, "primary", width=170).pack(side="right", padx=8)
+        btn(actions, T("Buscar duplicados"), self.find_dups, "primary", width=170).pack(side="right", padx=8)
         bar = ctk.CTkFrame(page, fg_color="transparent")
         bar.pack(fill="x", pady=(0, 12))
-        ctk.CTkLabel(bar, text="Tamaño mínimo", font=F(12), text_color=C["muted"]).pack(side="left", padx=(0, 10))
+        ctk.CTkLabel(bar, text=T("Tamaño mínimo"), font=F(12), text_color=C["muted"]).pack(side="left", padx=(0, 10))
         self.dup_min = ctk.CTkSegmentedButton(
             bar, values=["1 MB", "10 MB", "100 MB"], font=F(12, "bold"), height=34, corner_radius=8,
             fg_color=C["surface"], selected_color=C["accent"], selected_hover_color=C["accent_h"],
             unselected_color=C["surface"], unselected_hover_color=C["hover"], text_color=C["text"])
         self.dup_min.set("10 MB")
         self.dup_min.pack(side="left")
-        btn(bar, "Marcar copias (deja 1)", self._dup_mark_copies, "ghost", width=180).pack(side="left", padx=12)
+        btn(bar, T("Marcar copias (deja 1)"), self._dup_mark_copies, "ghost", width=180).pack(side="left", padx=12)
         self.dup_info = ctk.CTkLabel(bar, text="", font=F(13, "bold"), text_color=C["accent"])
         self.dup_info.pack(side="right")
-        self.dup_table = Table(page, [("name", "ARCHIVO", 320, "w"), ("size", "TAMAÑO", 110, "e"),
-                                      ("copies", "COPIAS", 90, "center"), ("path", "CARPETA", 420, "w")],
+        self.dup_table = Table(page, [("name", T("ARCHIVO"), 320, "w"), ("size", T("TAMAÑO"), 110, "e"),
+                                      ("copies", T("COPIAS"), 90, "center"), ("path", T("CARPETA"), 420, "w")],
                                checkable=True, height=16, on_open=self._open_node,
-                               empty=("copy", "Encuentra archivos repetidos",
-                                      "Compara por contenido los archivos del último análisis para quedarte "
-                                      "con una sola copia.", ("Buscar duplicados", self.find_dups)))
+                               empty=("copy", T("Encuentra archivos repetidos"),
+                                      T("Compara por contenido los archivos del último análisis para quedarte "
+                                        "con una sola copia."), (T("Buscar duplicados"), self.find_dups)))
         self.dup_table.pack(fill="both", expand=True)
         self.dup_table.enable_drag(self._table_drag)
         dt = self.dup_table
-        self.dup_table.context_menu([mi("Vista previa", lambda: self.preview(dt.focused()), "eye"),
-                                     mi("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(dt.focused()), "open",
-                                        "Doble clic"),
+        self.dup_table.context_menu([mi(T("Vista previa"), lambda: self.preview(dt.focused()), "eye"),
+                                     mi(T("Mostrar en el {fm}", fm=FILE_MANAGER), lambda: self._open_node(dt.focused()),
+                                        "open", T("Doble clic")),
                                      SEP,
-                                     mi("Añadir al Colector", lambda: self._collect_rows(dt, False), "add")])
-        self.hint(page, "Compara tamaño y huella del contenido (BLAKE2), así que solo lista copias exactas. "
-                        "«Marcar copias» deja sin marcar la primera de cada grupo.")
+                                     mi(T("Añadir al Colector"), lambda: self._collect_rows(dt, False), "add")])
+        self.hint(page, T("Compara tamaño y huella del contenido (BLAKE2), así que solo lista copias exactas. "
+                          "«Marcar copias» deja sin marcar la primera de cada grupo."))
         self._dup_groups: list = []
 
     def find_dups(self):
         if not self.scan_result:
-            self.alert("Primero analiza un disco o una carpeta en «Mapa del disco».")
+            self.alert(T("Primero analiza un disco o una carpeta en «Mapa del disco»."))
             return
         mins = {"1 MB": 1, "10 MB": 10, "100 MB": 100}[self.dup_min.get()] * 1024 * 1024
         res = self.scan_result
@@ -3487,13 +3552,14 @@ class App(ctk.CTk):
                                           os.path.dirname(p)], obj=(g.size, p),
                           sort={"size": g.size * 1000 - gi}, tags=() if pi else ("warn",))
             wasted = sum(g.wasted for g in groups)
-            self.dup_info.configure(text=f"{len(groups)} grupos · {human(wasted)} recuperables")
+            self.dup_info.configure(text=T("{n} grupos · {size} recuperables", n=num(len(groups)),
+                                           size=human(wasted)))
             if not groups:
-                t.set_empty("check", "Sin duplicados",
-                            "No hay copias exactas por encima del tamaño mínimo elegido. ¡Todo en orden!",
-                            ("Buscar de nuevo", self.find_dups))
-        self.run_task("Buscando duplicados…", lambda report: core.find_duplicates(
-            res, mins, self.cancel, lambda p: report(f"Comparando {p}")), done)
+                t.set_empty("check", T("Sin duplicados"),
+                            T("No hay copias exactas por encima del tamaño mínimo elegido. ¡Todo en orden!"),
+                            (T("Buscar de nuevo"), self.find_dups))
+        self.run_task(T("Buscando duplicados…"), lambda report: core.find_duplicates(
+            res, mins, self.cancel, lambda p: report(T("Comparando {path}", path=p))), done)
 
     def _dup_mark_copies(self):
         for k in self.dup_table.tv.get_children():
@@ -3516,32 +3582,32 @@ class App(ctk.CTk):
                 if lvl == core.WARN:
                     warn_note = why
         if blocked:
-            self.alert("No se borrarán porque están protegidos:\n\n" +
-                       "\n".join(f"• {p}\n   {why}" for p, why in blocked[:6]), "Elementos protegidos", "warn")
+            self.alert(T("No se borrarán porque están protegidos:") + "\n\n" +
+                       "\n".join(f"• {p}\n   {why}" for p, why in blocked[:6]), T("Elementos protegidos"), "warn")
         if not rest:
             return
-        perm = ConfirmDelete.ask(self, "Confirmar borrado", rest, warn_note)
+        perm = ConfirmDelete.ask(self, T("Confirmar borrado"), rest, warn_note)
         if perm is None:
             return
         paths = [p for p, _ in rest]
 
         def work(report):
-            return core.delete_paths(paths, perm, lambda p: report(f"Borrando {p}"))
+            return core.delete_paths(paths, perm, lambda p: report(T("Borrando {path}", path=p)))
 
         def done(res):
             if on_done:
                 on_done([p for p in paths if not os.path.lexists(p)])
             self.after_delete(res, perm)
-        self.run_task("Borrando…", work, done)
+        self.run_task(T("Borrando…"), work, done)
 
     # =====================================================================
     # Archivos grandes
     # =====================================================================
     def _build_bigfiles(self, page):
-        actions = self.page_header(page, "Archivos grandes", "Los archivos más pesados del último análisis")
-        btn(actions, "Borrar marcados…", lambda: self._delete_checked(self.big_table), "danger_solid", width=170
+        actions = self.page_header(page, T("Archivos grandes"), T("Los archivos más pesados del último análisis"))
+        btn(actions, T("Borrar marcados…"), lambda: self._delete_checked(self.big_table), "danger_solid", width=170
             ).pack(side="right")
-        btn(actions, "Al Colector", lambda: self._collect_rows(self.big_table), "secondary", width=120
+        btn(actions, T("Al Colector"), lambda: self._collect_rows(self.big_table), "secondary", width=120
             ).pack(side="right", padx=8)
         self.big_info = ctk.CTkLabel(actions, text="", font=F(13, "bold"), text_color=C["accent"])
         self.big_info.pack(side="right", padx=14)
@@ -3556,40 +3622,43 @@ class App(ctk.CTk):
         self.min_size.pack(side="left")
         self.ext_filter = ctk.CTkEntry(bar, width=300, height=34, corner_radius=8, font=F(12), fg_color=C["surface"],
                                        border_color=C["border"], text_color=C["text"],
-                                       placeholder_text="Filtrar: .iso, .zip, .mp4, nombre…",
+                                       placeholder_text=T("Filtrar: .iso, .zip, .mp4, nombre…"),
                                        placeholder_text_color=C["faint"])
         self.ext_filter.pack(side="left", padx=12)
         self.ext_filter.bind("<KeyRelease>", lambda e: self._fill_bigfiles())
-        ctk.CTkLabel(bar, text="Sin tocar desde", font=F(12), text_color=C["muted"]).pack(side="left", padx=(4, 8))
-        self.age_filter = Select(bar, values=["Cualquiera", "6 meses", "1 año", "2 años"], width=130,
+        ctk.CTkLabel(bar, text=T("Sin tocar desde"), font=F(12), text_color=C["muted"]).pack(side="left", padx=(4, 8))
+        # texto mostrado (traducido) -> días; el valor se lee de vuelta por el texto
+        self._ages = [(T("Cualquiera"), 0), (T("6 meses"), 182), (T("1 año"), 365), (T("2 años"), 730)]
+        self.age_filter = Select(bar, values=[a for a, _d in self._ages], width=130,
                                             height=34, corner_radius=8, font=F(12), fg_color=C["surface"],
                                             button_color=C["surface2"], button_hover_color=C["hover"],
                                             dropdown_fg_color=C["surface2"], text_color=C["text"],
                                             command=lambda _v: self._fill_bigfiles())
-        self.age_filter.set("Cualquiera")
+        self.age_filter.set(self._ages[0][0])
         self.age_filter.pack(side="left")
-        self.big_table = Table(page, [("name", "ARCHIVO", 280, "w"), ("size", "TAMAÑO", 110, "e"),
-                                      ("type", "TIPO", 100, "center"), ("date", "MODIFICADO", 110, "center"),
-                                      ("path", "CARPETA", 420, "w")],
+        self.big_table = Table(page, [("name", T("ARCHIVO"), 280, "w"), ("size", T("TAMAÑO"), 110, "e"),
+                                      ("type", T("TIPO"), 100, "center"), ("date", T("MODIFICADO"), 110, "center"),
+                                      ("path", T("CARPETA"), 420, "w")],
                                checkable=True, height=16, on_open=self._open_node,
-                               empty=("file", "Sin análisis todavía",
-                                      "Analiza un disco o una carpeta en «Mapa del disco» y aquí verás sus archivos "
-                                      "más pesados.", ("Ir al Mapa del disco", lambda: self.show("analyzer"))))
+                               empty=("file", T("Sin análisis todavía"),
+                                      T("Analiza un disco o una carpeta en «Mapa del disco» y aquí verás sus "
+                                        "archivos más pesados."),
+                                      (T("Ir al Mapa del disco"), lambda: self.show("analyzer"))))
         self.big_table.pack(fill="both", expand=True)
         self.big_table.bind("<<CheckChanged>>", lambda e: self._update_checked_info(self.big_table, self.big_info))
         self.big_table.enable_drag(self._table_drag)
         bt = self.big_table
-        self.big_table.context_menu([mi("Vista previa", lambda: self.preview(bt.focused()), "eye"),
-                                     mi("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(bt.focused()), "open",
-                                        "Doble clic"),
+        self.big_table.context_menu([mi(T("Vista previa"), lambda: self.preview(bt.focused()), "eye"),
+                                     mi(T("Mostrar en el {fm}", fm=FILE_MANAGER), lambda: self._open_node(bt.focused()),
+                                        "open", T("Doble clic")),
                                      SEP,
-                                     mi("Añadir al Colector", lambda: self._collect_rows(bt, False), "add"),
-                                     mi("Copiar ruta", lambda: self._copy_path(bt.focused()), "copy"),
+                                     mi(T("Añadir al Colector"), lambda: self._collect_rows(bt, False), "add"),
+                                     mi(T("Copiar ruta"), lambda: self._copy_path(bt.focused()), "copy"),
                                      SEP,
-                                     mi("Borrar…", lambda: self._delete_rows(bt), "trash", "Supr", danger=True)])
+                                     mi(T("Borrar…"), lambda: self._delete_rows(bt), "trash", T("Supr"), danger=True)])
         self.big_table.tv.bind("<Delete>", lambda e: self._delete_rows(bt))
-        self.hint(page, "Clic en la casilla para marcar · doble clic lo muestra en el " + FILE_MANAGER +
-                        " · arrastra filas al Colector.")
+        self.hint(page, T("Clic en la casilla para marcar · doble clic lo muestra en el {fm} · arrastra filas al "
+                          "Colector.", fm=FILE_MANAGER))
 
     def _fill_bigfiles(self):
         t = self.big_table
@@ -3599,7 +3668,7 @@ class App(ctk.CTk):
         mins = {"50 MB": 50, "100 MB": 100, "500 MB": 500, "1 GB": 1024, "5 GB": 5120}[self.min_size.get()] * 1024 ** 2
         flt = self.ext_filter.get().strip().lower()
         import time
-        days = {"Cualquiera": 0, "6 meses": 182, "1 año": 365, "2 años": 730}[self.age_filter.get()]
+        days = dict(self._ages).get(self.age_filter.get(), 0)
         limit = time.time() - days * 86400
         mt = self.scan_result.mtimes
         n = total = 0
@@ -3614,20 +3683,20 @@ class App(ctk.CTk):
                          os.path.dirname(path)], obj=(size, path), sort={"size": size, "date": m})
             n += 1
             total += size
-        self.big_info.configure(text=f"{n} archivos · {human(total)}")
+        self.big_info.configure(text=T("{n} archivos · {size}", n=num(n), size=human(total)))
         if not n:
-            t.set_empty("search", "Nada con estos filtros",
-                        "Prueba con un tamaño mínimo menor, otra antigüedad o borra el texto del filtro.")
+            t.set_empty("search", T("Nada con estos filtros"),
+                        T("Prueba con un tamaño mínimo menor, otra antigüedad o borra el texto del filtro."))
 
     def _update_checked_info(self, table, label):
         objs = [o for o in table.checked_objs() if o]
         if objs:
-            label.configure(text=f"Marcados: {len(objs)} · {human(sum(o[0] for o in objs))}")
+            label.configure(text=T("Marcados: {n} · {size}", n=num(len(objs)), size=human(sum(o[0] for o in objs))))
 
     def _delete_checked(self, table):
         objs = [o for o in table.checked_objs() if o]
         if not objs:
-            self.alert("Marca primero los elementos haciendo clic en su casilla.", "Nada marcado")
+            self.alert(T("Marca primero los elementos haciendo clic en su casilla."), T("Nada marcado"))
             return
         self._delete_paths_ui([(p, s) for s, p in objs], on_done=lambda ps: self._remove_rows(table, ps))
 
@@ -3646,41 +3715,46 @@ class App(ctk.CTk):
     # Modelos de IA
     # =====================================================================
     def _build_models(self, page):
-        actions = self.page_header(page, "Modelos IA", "LLMs y pesos de IA descargados: Ollama, Hugging Face, LM Studio…")
-        btn(actions, "Buscar en mi usuario", lambda: self.start_scan(core.HOME), "primary", width=180).pack(side="right")
-        top, self.ollama_info = self.section(page, "Ollama")
-        btn(top, "Eliminar modelo", self._ollama_rm, "danger", width=150).pack(side="right")
-        btn(top, "Actualizar", self._fill_ollama, "ghost", width=100).pack(side="right", padx=6)
-        self.ollama_table = Table(page, [("name", "MODELO", 360, "w"), ("size", "TAMAÑO", 110, "e"),
-                                         ("path", "MANIFIESTO", 420, "w")], height=5,
-                                  empty=("ai", "Sin modelos de Ollama",
-                                         "Si usas Ollama, aquí verás cada modelo y lo que ocupa."))
-        self.ollama_table.pack(fill="both", expand=True)
-        mid, self.model_info = self.section(page, "Archivos de modelos",
-                                            ".gguf · .safetensors · .ckpt · .pt · .onnx · .bin  (≥ 50 MB)", (18, 8))
-        btn(mid, "Borrar marcados…", lambda: self._delete_checked(self.model_table), "danger", width=160
+        actions = self.page_header(page, T("Modelos IA"),
+                                   T("LLMs y pesos de IA descargados: Ollama, Hugging Face, LM Studio…"))
+        btn(actions, T("Buscar en mi usuario"), lambda: self.start_scan(core.HOME), "primary", width=180
             ).pack(side="right")
-        btn(mid, "Al Colector", lambda: self._collect_rows(self.model_table), "secondary", width=110
+        top, self.ollama_info = self.section(page, "Ollama")
+        btn(top, T("Eliminar modelo"), self._ollama_rm, "danger", width=150).pack(side="right")
+        btn(top, T("Actualizar"), self._fill_ollama, "ghost", width=100).pack(side="right", padx=6)
+        self.ollama_table = Table(page, [("name", T("MODELO"), 360, "w"), ("size", T("TAMAÑO"), 110, "e"),
+                                         ("path", T("MANIFIESTO"), 420, "w")], height=5,
+                                  empty=("ai", T("Sin modelos de Ollama"),
+                                         T("Si usas Ollama, aquí verás cada modelo y lo que ocupa.")))
+        self.ollama_table.pack(fill="both", expand=True)
+        mid, self.model_info = self.section(page, T("Archivos de modelos"),
+                                            ".gguf · .safetensors · .ckpt · .pt · .onnx · .bin  (≥ 50 MB)", (18, 8))
+        btn(mid, T("Borrar marcados…"), lambda: self._delete_checked(self.model_table), "danger", width=160
+            ).pack(side="right")
+        btn(mid, T("Al Colector"), lambda: self._collect_rows(self.model_table), "secondary", width=110
             ).pack(side="right", padx=8)
-        self.model_table = Table(page, [("name", "ARCHIVO", 300, "w"), ("size", "TAMAÑO", 110, "e"),
-                                        ("app", "ORIGEN", 140, "w"), ("path", "CARPETA", 420, "w")],
+        self.model_table = Table(page, [("name", T("ARCHIVO"), 300, "w"), ("size", T("TAMAÑO"), 110, "e"),
+                                        ("app", T("ORIGEN"), 140, "w"), ("path", T("CARPETA"), 420, "w")],
                                  checkable=True, height=9, on_open=self._open_node,
-                                 empty=("ai", "Busca modelos descargados",
-                                        "Pesos .gguf, .safetensors, .ckpt… de Hugging Face, LM Studio y otras apps.",
-                                        ("Buscar en mi usuario", lambda: self.start_scan(core.HOME))))
+                                 empty=("ai", T("Busca modelos descargados"),
+                                        T("Pesos .gguf, .safetensors, .ckpt… de Hugging Face, LM Studio y otras "
+                                          "apps."),
+                                        (T("Buscar en mi usuario"), lambda: self.start_scan(core.HOME))))
         self.model_table.pack(fill="both", expand=True)
         self.model_table.bind("<<CheckChanged>>",
                               lambda e: self._update_checked_info(self.model_table, self.model_info))
         self.model_table.enable_drag(self._table_drag)
         mt = self.model_table
-        self.model_table.context_menu([mi("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(mt.focused()),
-                                          "open", "Doble clic"),
-                                       mi("Copiar ruta", lambda: self._copy_path(mt.focused()), "copy"),
-                                       mi("Añadir al Colector", lambda: self._collect_rows(mt, False), "add"),
+        self.model_table.context_menu([mi(T("Mostrar en el {fm}", fm=FILE_MANAGER),
+                                          lambda: self._open_node(mt.focused()), "open", T("Doble clic")),
+                                       mi(T("Copiar ruta"), lambda: self._copy_path(mt.focused()), "copy"),
+                                       mi(T("Añadir al Colector"), lambda: self._collect_rows(mt, False), "add"),
                                        SEP,
-                                       mi("Borrar…", lambda: self._delete_rows(mt), "trash", "Supr", danger=True)])
+                                       mi(T("Borrar…"), lambda: self._delete_rows(mt), "trash", T("Supr"),
+                                          danger=True)])
         self.model_table.tv.bind("<Delete>", lambda e: self._delete_rows(mt))
-        self.hint(page, "Los modelos de Ollama se eliminan con «ollama rm» para no dejar la instalación inconsistente.")
+        self.hint(page, T("Los modelos de Ollama se eliminan con «ollama rm» para no dejar la instalación "
+                          "inconsistente."))
         self.after(400, self._fill_ollama)
 
     def _fill_ollama(self):
@@ -3689,30 +3763,30 @@ class App(ctk.CTk):
         models = core.list_ollama_models()
         for m in models:
             t.add(m.manifest, [m.name, human(m.size), m.manifest], obj=m, sort={"size": m.size})
-        self.ollama_info.configure(text=f"{len(models)} modelos · {human(sum(m.size for m in models))}"
-                                   if models else "")
+        self.ollama_info.configure(text=T("{n} modelos · {size}", n=num(len(models)),
+                                          size=human(sum(m.size for m in models))) if models else "")
 
     def _ollama_rm(self):
         m = self.ollama_table.focused()
         if not m:
-            self.alert("Selecciona un modelo de la lista.", "Ningún modelo seleccionado")
+            self.alert(T("Selecciona un modelo de la lista."), T("Ningún modelo seleccionado"))
             return
-        if not self.confirm(f"¿Eliminar {m.name}?", f"Liberarás {human(m.size)}. Si lo necesitas otra vez, "
-                                                     "tendrás que descargarlo con «ollama pull».", "Eliminar",
-                            danger=True):
+        if not self.confirm(T("¿Eliminar {name}?", name=m.name),
+                            T("Liberarás {size}. Si lo necesitas otra vez, tendrás que descargarlo con "
+                              "«ollama pull».", size=human(m.size)), T("Eliminar"), danger=True):
             return
 
         def done(res):
             ok, out = res
             if ok:
                 core.add_freed(m.size)
-                self.alert(f"Has liberado {human(m.size)}.", f"{m.name} eliminado", "ok")
+                self.alert(T("Has liberado {size}.", size=human(m.size)), T("{name} eliminado", name=m.name), "ok")
             else:
-                self.alert(f"{out}\n\nComprueba que Ollama está instalado y en ejecución.",
-                           "No se pudo eliminar", "error")
+                self.alert(f"{out}\n\n" + T("Comprueba que Ollama está instalado y en ejecución."),
+                           T("No se pudo eliminar"), "error")
             self._fill_ollama()
             self.refresh_summary()
-        self.run_task(f"Eliminando {m.name}…", lambda report: core.ollama_remove(m.name), done)
+        self.run_task(T("Eliminando {name}…", name=m.name), lambda report: core.ollama_remove(m.name), done)
 
     @staticmethod
     def _guess_origin(path: str) -> str:
@@ -3736,62 +3810,67 @@ class App(ctk.CTk):
             t.add(path, [os.path.basename(path), human(size), self._guess_origin(path), os.path.dirname(path)],
                   obj=(size, path), sort={"size": size})
         total = sum(s for s, _ in self.scan_result.model_files)
-        self.model_info.configure(text=f"{len(self.scan_result.model_files)} archivos · {human(total)}")
+        self.model_info.configure(text=T("{n} archivos · {size}", n=num(len(self.scan_result.model_files)),
+                                         size=human(total)))
 
     # =====================================================================
     # Aplicaciones y restos
     # =====================================================================
     def _build_apps(self, page):
-        actions = self.page_header(page, "Aplicaciones", "Programas instalados y restos de los que ya desinstalaste")
-        btn(actions, "Desinstalar…", self._uninstall, "danger_solid", width=140).pack(side="right")
-        btn(actions, "Calcular tamaño real", self._measure_apps, "secondary", width=170).pack(side="right", padx=8)
-        btn(actions, "Cargar aplicaciones", self.load_apps, "primary", width=170).pack(side="right")
-        top, self.apps_info = self.section(page, "Instaladas")
+        actions = self.page_header(page, T("Aplicaciones"),
+                                   T("Programas instalados y restos de los que ya desinstalaste"))
+        btn(actions, T("Desinstalar…"), self._uninstall, "danger_solid", width=140).pack(side="right")
+        btn(actions, T("Calcular tamaño real"), self._measure_apps, "secondary", width=170).pack(side="right", padx=8)
+        btn(actions, T("Cargar aplicaciones"), self.load_apps, "primary", width=170).pack(side="right")
+        top, self.apps_info = self.section(page, T("Instaladas"))
         if core.IS_WIN:
-            btn(top, "Aplicaciones de Windows  ↗", lambda: self._launch("ms-settings:appsfeatures"), "ghost",
+            btn(top, T("Aplicaciones de Windows") + "  ↗", lambda: self._launch("ms-settings:appsfeatures"), "ghost",
                 width=200).pack(side="right")
-        self.apps_table = Table(page, [("name", "APLICACIÓN", 320, "w"), ("size", "TAMAÑO", 110, "e"),
-                                       ("publisher", "EDITOR", 190, "w"), ("date", "INSTALADA", 100, "center"),
-                                       ("path", "UBICACIÓN", 320, "w")], height=9,
+        self.apps_table = Table(page, [("name", T("APLICACIÓN"), 320, "w"), ("size", T("TAMAÑO"), 110, "e"),
+                                       ("publisher", T("EDITOR"), 190, "w"), ("date", T("INSTALADA"), 100, "center"),
+                                       ("path", T("UBICACIÓN"), 320, "w")], height=9,
                                 on_open=lambda a: a and a.location and core.open_in_explorer(a.location),
-                                empty=("apps", "Tus aplicaciones instaladas",
-                                       "Carga la lista para ver cuánto ocupa cada programa y desinstalar lo que "
-                                       "no uses.", ("Cargar aplicaciones", self.load_apps)))
+                                empty=("apps", T("Tus aplicaciones instaladas"),
+                                       T("Carga la lista para ver cuánto ocupa cada programa y desinstalar lo que "
+                                         "no uses."), (T("Cargar aplicaciones"), self.load_apps)))
         self.apps_table.pack(fill="both", expand=True)
-        self.apps_table.context_menu([mi("Abrir ubicación", self._open_app, "open", "Doble clic"),
+        self.apps_table.context_menu([mi(T("Abrir ubicación"), self._open_app, "open", T("Doble clic")),
                                       SEP,
-                                      mi("Desinstalar…", self._uninstall, "trash", danger=True)])
-        mid, self.res_info = self.section(page, "Posibles restos",
-                                          "Carpetas de 20 MB o más que no coinciden con ninguna app instalada", (18, 8))
-        btn(mid, "Borrar marcados…", lambda: self._delete_checked(self.res_table), "danger", width=160
+                                      mi(T("Desinstalar…"), self._uninstall, "trash", danger=True)])
+        mid, self.res_info = self.section(page, T("Posibles restos"),
+                                          T("Carpetas de 20 MB o más que no coinciden con ninguna app instalada"),
+                                          (18, 8))
+        btn(mid, T("Borrar marcados…"), lambda: self._delete_checked(self.res_table), "danger", width=160
             ).pack(side="right")
-        btn(mid, "Al Colector", lambda: self._collect_rows(self.res_table), "secondary", width=110
+        btn(mid, T("Al Colector"), lambda: self._collect_rows(self.res_table), "secondary", width=110
             ).pack(side="right", padx=8)
-        btn(mid, "Buscar restos", self.find_residues, "secondary", width=130).pack(side="right")
-        self.res_table = Table(page, [("name", "CARPETA", 300, "w"), ("size", "TAMAÑO", 110, "e"),
-                                      ("where", "DÓNDE", 180, "w"), ("path", "RUTA", 420, "w")],
+        btn(mid, T("Buscar restos"), self.find_residues, "secondary", width=130).pack(side="right")
+        self.res_table = Table(page, [("name", T("CARPETA"), 300, "w"), ("size", T("TAMAÑO"), 110, "e"),
+                                      ("where", T("DÓNDE"), 180, "w"), ("path", T("RUTA"), 420, "w")],
                                checkable=True, height=7, on_open=self._open_node,
-                               empty=("search", "Restos de apps desinstaladas",
-                                      "Busca carpetas grandes que ya no pertenecen a ningún programa.",
-                                      ("Buscar restos", self.find_residues)))
+                               empty=("search", T("Restos de apps desinstaladas"),
+                                      T("Busca carpetas grandes que ya no pertenecen a ningún programa."),
+                                      (T("Buscar restos"), self.find_residues)))
         self.res_table.pack(fill="both", expand=True)
         self.res_table.bind("<<CheckChanged>>", lambda e: self._update_checked_info(self.res_table, self.res_info))
         self.res_table.enable_drag(self._table_drag)
         rt = self.res_table
-        self.res_table.context_menu([mi("Mostrar en el " + FILE_MANAGER, lambda: self._open_node(rt.focused()), "open",
-                                        "Doble clic"),
-                                     mi("Copiar ruta", lambda: self._copy_path(rt.focused()), "copy"),
-                                     mi("Añadir al Colector", lambda: self._collect_rows(rt, False), "add"),
+        self.res_table.context_menu([mi(T("Mostrar en el {fm}", fm=FILE_MANAGER), lambda: self._open_node(rt.focused()),
+                                        "open", T("Doble clic")),
+                                     mi(T("Copiar ruta"), lambda: self._copy_path(rt.focused()), "copy"),
+                                     mi(T("Añadir al Colector"), lambda: self._collect_rows(rt, False), "add"),
                                      SEP,
-                                     mi("Borrar…", lambda: self._delete_rows(rt), "trash", "Supr", danger=True)])
+                                     mi(T("Borrar…"), lambda: self._delete_rows(rt), "trash", T("Supr"),
+                                        danger=True)])
         self.res_table.tv.bind("<Delete>", lambda e: self._delete_rows(rt))
-        self.hint(page, "Es una estimación: abre cada carpeta y revísala antes de borrar. Por defecto va a la Papelera.")
+        self.hint(page, T("Es una estimación: abre cada carpeta y revísala antes de borrar. Por defecto va a la "
+                          "Papelera."))
 
     def load_apps(self):
         def done(apps):
             self.apps = apps
             self._fill_apps()
-        self.run_task("Leyendo aplicaciones instaladas…", lambda report: core.list_installed_apps(), done)
+        self.run_task(T("Leyendo aplicaciones instaladas…"), lambda report: core.list_installed_apps(), done)
 
     def _fill_apps(self):
         t = self.apps_table
@@ -3801,11 +3880,12 @@ class App(ctk.CTk):
             date = f"{d[6:8]}/{d[4:6]}/{d[0:4]}" if len(d) == 8 and d.isdigit() else ""
             t.add(f"app{i}", [a.name, human(a.size) if a.size else "—", a.publisher, date, a.location],
                   obj=a, sort={"size": a.size, "date": d})
-        self.apps_info.configure(text=f"{len(self.apps)} aplicaciones · {human(sum(a.size for a in self.apps))}")
+        self.apps_info.configure(text=T("{n} aplicaciones · {size}", n=num(len(self.apps)),
+                                         size=human(sum(a.size for a in self.apps))))
 
     def _measure_apps(self):
         if not self.apps:
-            self.alert("Primero pulsa «Cargar aplicaciones».")
+            self.alert(T("Primero pulsa «Cargar aplicaciones»."))
             return
         apps = list(self.apps)
 
@@ -3814,7 +3894,7 @@ class App(ctk.CTk):
                 if self.cancel.is_set():
                     break
                 if a.location and os.path.isdir(a.location) and core.protection_level(a.location)[0] != core.BLOCK:
-                    report(f"Midiendo {a.name}…")
+                    report(T("Midiendo {name}…", name=a.name))
                     s, _ = core.dir_size(a.location, self.cancel)
                     if s:
                         a.size = s
@@ -3824,32 +3904,33 @@ class App(ctk.CTk):
         def done(apps_):
             self.apps = apps_
             self._fill_apps()
-        self.run_task("Midiendo carpetas de instalación…", work, done)
+        self.run_task(T("Midiendo carpetas de instalación…"), work, done)
 
     def _open_app(self):
         a = self.apps_table.focused()
         if a and a.location and os.path.isdir(a.location):
             core.open_in_explorer(a.location)
         elif a:
-            self.alert("Esta aplicación no indica su carpeta de instalación.")
+            self.alert(T("Esta aplicación no indica su carpeta de instalación."))
 
     def _uninstall(self):
         a = self.apps_table.focused()
         if not a:
-            self.alert("Selecciona una aplicación de la lista.", "Ninguna aplicación seleccionada")
+            self.alert(T("Selecciona una aplicación de la lista."), T("Ninguna aplicación seleccionada"))
             return
         if core.IS_LINUX:
             if not a.uninstall:
-                self.alert("No sé cómo desinstalar este paquete.", "Sin desinstalador", "warn")
+                self.alert(T("No sé cómo desinstalar este paquete."), T("Sin desinstalador"), "warn")
                 return
             self.clipboard_clear()
             self.clipboard_append(a.uninstall)
-            self.alert(f"Ejecuta este comando en una terminal (ya está copiado):\n\n{a.uninstall}",
-                       f"Desinstalar {a.name}", "info")
+            self.alert(T("Ejecuta este comando en una terminal (ya está copiado):") + f"\n\n{a.uninstall}",
+                       T("Desinstalar {name}", name=a.name), "info")
             return
-        msg = ("Se abrirá el desinstalador oficial del programa." if core.IS_WIN else
-               "La aplicación se moverá a la Papelera. Sus datos en ~/Library aparecerán luego en «Posibles restos».")
-        if not self.confirm(f"¿Desinstalar {a.name}?", msg, "Desinstalar", danger=True):
+        msg = (T("Se abrirá el desinstalador oficial del programa.") if core.IS_WIN else
+               T("La aplicación se moverá a la Papelera. Sus datos en ~/Library aparecerán luego en "
+                 "«Posibles restos»."))
+        if not self.confirm(T("¿Desinstalar {name}?", name=a.name), msg, T("Desinstalar"), danger=True):
             return
         try:
             core.run_uninstaller(a.uninstall)
@@ -3857,12 +3938,12 @@ class App(ctk.CTk):
                 self.apps = [x for x in self.apps if x is not a]
                 self._fill_apps()
         except Exception as e:  # noqa: BLE001
-            self.alert(str(e), "No se pudo desinstalar", "error")
+            self.alert(str(e), T("No se pudo desinstalar"), "error")
 
     def find_residues(self):
         def work(report):
             apps = self.apps or core.list_installed_apps()
-            return apps, core.find_residues(apps, self.cancel, progress=lambda p: report(f"Revisando {p}"))
+            return apps, core.find_residues(apps, self.cancel, progress=lambda p: report(T("Revisando {path}", path=p)))
 
         def done(r):
             apps, residues = r
@@ -3874,8 +3955,9 @@ class App(ctk.CTk):
             for x in residues:
                 t.add(x.path, [os.path.basename(x.path), human(x.size), x.where, x.path], obj=(x.size, x.path),
                       sort={"size": x.size})
-            self.res_info.configure(text=f"{len(residues)} carpetas · {human(sum(x.size for x in residues))}")
-        self.run_task("Buscando restos de programas…", work, done)
+            self.res_info.configure(text=T("{n} carpetas · {size}", n=num(len(residues)),
+                                           size=human(sum(x.size for x in residues))))
+        self.run_task(T("Buscando restos de programas…"), work, done)
 
     # =====================================================================
     # Actualizaciones
@@ -3899,11 +3981,11 @@ class App(ctk.CTk):
         self.upd_sub.grid(row=1, column=1, sticky="nw", pady=(0, 12))
         acts = ctk.CTkFrame(b, fg_color="transparent")
         acts.grid(row=0, column=2, rowspan=2, padx=14)
-        btn(acts, "Actualizar ahora", lambda: self._start_update(self._update_info), "primary", width=150
+        btn(acts, T("Actualizar ahora"), lambda: self._start_update(self._update_info), "primary", width=150
             ).pack(side="left", padx=(0, 8))
-        btn(acts, "Ver novedades", lambda: self._show_notes(self._update_info), "secondary", width=130
+        btn(acts, T("Ver novedades"), lambda: self._show_notes(self._update_info), "secondary", width=130
             ).pack(side="left", padx=(0, 4))
-        btn(acts, "Omitir esta versión", self._skip_update, "ghost", width=150).pack(side="left")
+        btn(acts, T("Omitir esta versión"), self._skip_update, "ghost", width=150).pack(side="left")
         btn(acts, "✕", lambda: b.grid_remove(), "ghost", width=36).pack(side="left")
         b.grid_remove()
         self.upd_banner = b
@@ -3914,7 +3996,7 @@ class App(ctk.CTk):
             return
         self._checking = True
         if manual:
-            self.set_status("Buscando actualizaciones…")
+            self.set_status(T("Buscando actualizaciones…"))
         cur = self._current_version()
 
         def worker():
@@ -3926,32 +4008,34 @@ class App(ctk.CTk):
         self._checking = False
         if info is None:
             if manual:
-                self.set_status("Listo")
-                self.alert("No se pudo comprobar si hay una versión nueva. Revisa la conexión a Internet e "
-                           "inténtalo más tarde.", "Sin conexión", "warn")
+                self.set_status(T("Listo"))
+                self.alert(T("No se pudo comprobar si hay una versión nueva. Revisa la conexión a Internet e "
+                             "inténtalo más tarde."), T("Sin conexión"), "warn")
             return
         newer = core.parse_version(info.version) > core.parse_version(cur)
         if not newer:
             if manual:
-                self.set_status("Listo")
-                self.alert(f"Tienes la versión {VERSION}, que es la más reciente.", "Ya tienes la última versión",
-                           "ok")
+                self.set_status(T("Listo"))
+                self.alert(T("Tienes la versión {version}, que es la más reciente.", version=VERSION),
+                           T("Ya tienes la última versión"), "ok")
             return
         if not info.asset_url:  # p. ej. la build de macOS aún no está: no se avisa hasta que exista
             if manual:
-                self.set_status("Listo")
-                self.alert(f"Ya hay una versión v{info.version}, pero su descarga para {core.OS_NAME} todavía no "
-                           "está lista. Vuelve a mirarlo en un rato.", "Casi lista", "info")
+                self.set_status(T("Listo"))
+                self.alert(T("Ya hay una versión v{version}, pero su descarga para {os} todavía no "
+                             "está lista. Vuelve a mirarlo en un rato.", version=info.version, os=core.OS_NAME),
+                           T("Casi lista"), "info")
             return
         if not manual and core.load_settings().get("skip_version") == info.version:
             return
         self._update_info = info
-        self.upd_title.configure(text=f"Nueva versión v{info.version} disponible")
-        self.upd_sub.configure(text=f"Tienes la v{cur}." + (f"  Descarga de {human(info.asset_size)}, "
-                                                               "verificada con SHA-256." if info.asset_size else ""))
+        self.upd_title.configure(text=T("Nueva versión v{version} disponible", version=info.version))
+        self.upd_sub.configure(text=T("Tienes la v{version}.", version=cur) + (
+            "  " + T("Descarga de {size}, verificada con SHA-256.", size=human(info.asset_size))
+            if info.asset_size else ""))
         self.upd_banner.grid()
         if manual:
-            self.set_status(f"Hay una versión nueva: v{info.version}")
+            self.set_status(T("Hay una versión nueva: v{version}", version=info.version))
 
     def _skip_update(self):
         if self._update_info:
@@ -3959,17 +4043,17 @@ class App(ctk.CTk):
             s["skip_version"] = self._update_info.version
             core.save_settings(s)
         self.upd_banner.grid_remove()
-        self.set_status("No se volverá a avisar de esta versión. Puedes buscarla con «Buscar actualizaciones».")
+        self.set_status(T("No se volverá a avisar de esta versión. Puedes buscarla con «Buscar actualizaciones»."))
 
     def _show_notes(self, info):
         if not info:
             return
-        d = Dialog(self, f"Novedades de v{info.version}", width=720, height=520)
-        d.header("info", f"Desktop Free Space v{info.version}", "Lo nuevo en esta versión")
-        d.buttons([("Ver en GitHub", "secondary", "web"), ("Cerrar", "primary", None)])
+        d = Dialog(self, T("Novedades de v{version}", version=info.version), width=720, height=520)
+        d.header("info", f"Desktop Free Space v{info.version}", T("Lo nuevo en esta versión"))
+        d.buttons([(T("Ver en GitHub"), "secondary", "web"), (T("Cerrar"), "primary", None)])
         tb = ctk.CTkTextbox(d.body, font=F(13), fg_color=C["bg"], text_color=C["muted"], border_width=1,
                             border_color=C["border"], corner_radius=12, wrap="word")
-        tb.insert("end", info.notes.strip() or "Esta versión no incluye notas.")
+        tb.insert("end", info.notes.strip() or T("Esta versión no incluye notas."))
         tb.configure(state="disabled")
         tb.pack(fill="both", expand=True, padx=24, pady=12)
         self.wait_window(d)
@@ -3980,13 +4064,13 @@ class App(ctk.CTk):
         if not info:
             return
         if not core.is_frozen():
-            self.alert("Estás ejecutando la app desde el código. Actualízala con «git pull»; te abro la página "
-                       "de la versión nueva.", "Actualizar desde el código")
+            self.alert(T("Estás ejecutando la app desde el código. Actualízala con «git pull»; te abro la página "
+                         "de la versión nueva."), T("Actualizar desde el código"))
             if info.html_url:
                 self._launch(info.html_url)
             return
         if self.busy:
-            self.alert("Espera a que termine la tarea actual o cancélala.", "Tarea en curso")
+            self.alert(T("Espera a que termine la tarea actual o cancélala."), T("Tarea en curso"))
             return
         UpdateDialog(self, info)
 
@@ -3995,26 +4079,27 @@ class UpdateDialog(Dialog):
     """Descarga la versión nueva con barra de progreso, la verifica y la instala al reiniciar."""
 
     def __init__(self, app, info):
-        super().__init__(app, "Actualizar", width=560, height=300)
+        super().__init__(app, T("Actualizar"), width=560, height=300)
         self.resizable(False, False)
         self.app, self.info = app, info
         self.cancel = threading.Event()
         self.q: queue.Queue = queue.Queue()
         self.path = None
-        self.header("info", f"Actualizando a la v{info.version}",
-                    f"Se descarga {info.asset_name} ({human(info.asset_size)}) y se comprueba su huella SHA-256.")
+        self.header("info", T("Actualizando a la v{version}", version=info.version),
+                    T("Se descarga {name} ({size}) y se comprueba su huella SHA-256.", name=info.asset_name,
+                      size=human(info.asset_size)))
         self.bar = ctk.CTkProgressBar(self.body, height=10, corner_radius=5, fg_color=C["track"],
                                       progress_color=C["accent"])
         self.bar.set(0)
         self.bar.pack(fill="x", padx=24, pady=(14, 6))
-        self.msg = ctk.CTkLabel(self.body, text="Conectando…", font=F(12), text_color=C["muted"], anchor="w")
+        self.msg = ctk.CTkLabel(self.body, text=T("Conectando…"), font=F(12), text_color=C["muted"], anchor="w")
         self.msg.pack(fill="x", padx=24)
         bar = ctk.CTkFrame(self.body, fg_color="transparent")
         bar.pack(side="bottom", fill="x", padx=24, pady=(8, 22))
-        self.go = btn(bar, "Reiniciar para terminar", self._restart, "primary", width=200)
+        self.go = btn(bar, T("Reiniciar para terminar"), self._restart, "primary", width=200)
         self.go.configure(state="disabled")
         self.go.pack(side="right", padx=(8, 0))
-        self.stop = btn(bar, "Cancelar", self._cancel, "secondary", width=110)
+        self.stop = btn(bar, T("Cancelar"), self._cancel, "secondary", width=110)
         self.stop.pack(side="right")
         self.protocol("WM_DELETE_WINDOW", self._cancel)
         threading.Thread(target=self._download, daemon=True).start()
@@ -4035,17 +4120,18 @@ class UpdateDialog(Dialog):
                     d, t = val
                     if t:
                         self.bar.set(d / t)
-                    self.msg.configure(text=f"Descargando… {human(d)}" + (f" de {human(t)}" if t else ""))
+                    self.msg.configure(text=T("Descargando… {done} de {total}", done=human(d), total=human(t))
+                                       if t else T("Descargando… {done}", done=human(d)))
                 elif kind == "ok":
                     self.path = val
                     self.bar.set(1)
-                    self.msg.configure(text="Descarga verificada (SHA-256 correcto). Reinicia para terminar.",
+                    self.msg.configure(text=T("Descarga verificada (SHA-256 correcto). Reinicia para terminar."),
                                        text_color=C["ok"])
                     self.go.configure(state="normal")
                 elif kind == "err":
                     self.bar.configure(progress_color=C["bad"])
                     self.msg.configure(text=val, text_color=C["bad"])
-                    self.stop.configure(text="Cerrar")
+                    self.stop.configure(text=T("Cerrar"))
                     return
                 elif kind == "applied":
                     self._finish(val)
@@ -4064,13 +4150,13 @@ class UpdateDialog(Dialog):
     def _restart(self):
         self.go.configure(state="disabled")
         self.stop.configure(state="disabled")
-        self.msg.configure(text="Instalando…", text_color=C["muted"])
+        self.msg.configure(text=T("Instalando…"), text_color=C["muted"])
 
         def work():
             try:
                 self.q.put(("applied", core.apply_update(self.path)))
             except Exception as e:  # noqa: BLE001
-                self.q.put(("err", f"No se pudo instalar: {e}"))
+                self.q.put(("err", T("No se pudo instalar: {err}", err=e)))
         threading.Thread(target=work, daemon=True).start()
         self.after(100, self._poll)
 
@@ -4078,12 +4164,12 @@ class UpdateDialog(Dialog):
         if how == "opened":
             self.destroy()
             if core.IS_LINUX:
-                text = ("He abierto el paquete de la versión nueva en el instalador de tu sistema. Pulsa "
-                        "«Instalar» (o «Actualizar») y vuelve a abrir la app.")
+                text = T("He abierto el paquete de la versión nueva en el instalador de tu sistema. Pulsa "
+                         "«Instalar» (o «Actualizar») y vuelve a abrir la app.")
             else:
-                text = ("He abierto el instalador de la versión nueva. Arrastra la app a Aplicaciones para "
-                        "terminar y vuelve a abrirla.")
-            self.app.alert(text, "Termina la instalación")
+                text = T("He abierto el instalador de la versión nueva. Arrastra la app a Aplicaciones para "
+                         "terminar y vuelve a abrirla.")
+            self.app.alert(text, T("Termina la instalación"))
             return
         if not core.IS_WIN:
             core.relaunch_after_update()
@@ -4097,7 +4183,10 @@ def _pick_fonts():
     probe.withdraw()
     fams = set(tkfont.families(probe))
     probe.destroy()
-    UI_FONT = next((f for f in ("Segoe UI Variable Text", "Segoe UI", ".AppleSystemUIFont", "SF Pro Text",
+    cjk = {"zh": ("Microsoft YaHei UI", "PingFang SC", "Noto Sans CJK SC", "Noto Sans SC", "WenQuanYi Micro Hei"),
+           "ja": ("Yu Gothic UI", "Meiryo UI", "Hiragino Sans", "Noto Sans CJK JP", "Noto Sans JP")
+           }.get(i18n.LANG, ())
+    UI_FONT = next((f for f in cjk + ("Segoe UI Variable Text", "Segoe UI", ".AppleSystemUIFont", "SF Pro Text",
                                 "Helvetica Neue", "Inter", "Cantarell", "Ubuntu", "Noto Sans", "DejaVu Sans")
                     if f in fams), "TkDefaultFont")
     global MONO_FONT

@@ -44,6 +44,8 @@ A dark-themed desktop app for **Windows, macOS and Linux** that draws an interac
 
 ## ✨ Features
 
+**7 languages:** English, Español, Français, Deutsch, Italiano, 简体中文 and 日本語. The app follows your system language; change it any time with the 🌐 button in the sidebar.
+
 ### Disks (Discos)
 - Free, used and total space of the system disk with a usage ring, plus a row with a capacity bar for every other disk. **Updates in real time**, no scan needed.
 - **Space freed**: how many GB you have freed with the app since you installed it (permanent deletions, emptied Trash and removed models).
@@ -185,6 +187,8 @@ python app/main.py
 desktop-free-space/
 ├── app/
 │   ├── core.py        # Logic: scanning, per-OS categories, duplicates, path protection and deletion
+│   ├── i18n.py        # Languages: T("Spanish text") → current language
+│   ├── locales/       # Translations (en, fr, de, it, zh, ja)
 │   └── main.py        # GUI (customtkinter + sunburst map)
 ├── assets/            # Icons (icon.ico, icon.png)
 ├── docs/              # Cover (hero.png), screenshots (screenshots/) and social preview image (social-preview.jpg)

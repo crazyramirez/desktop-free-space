@@ -42,6 +42,8 @@ Aplicación de escritorio para **Windows, macOS y Linux**, con interfaz oscura, 
 
 ## ✨ Funcionalidades
 
+**7 idiomas:** Español, English, Français, Deutsch, Italiano, 简体中文 y 日本語. La app usa el idioma del sistema y puedes cambiarlo cuando quieras con el botón 🌐 de la barra lateral.
+
 ### Discos
 - Espacio libre, usado y total del disco del sistema, con un anillo de uso, y una fila con barra de capacidad para cada uno del resto de discos. **Se actualiza en tiempo real**, sin tener que analizar.
 - **Espacio liberado**: cuántos GB has liberado con la app desde que la instalaste (cuenta los borrados definitivos, la Papelera vaciada y los modelos eliminados).
@@ -183,6 +185,8 @@ python app/main.py
 desktop-free-space/
 ├── app/
 │   ├── core.py        # Lógica: análisis, categorías por sistema, duplicados, protección de rutas y borrado
+│   ├── i18n.py        # Idiomas: T("texto en español") → idioma actual
+│   ├── locales/       # Traducciones (en, fr, de, it, zh, ja)
 │   └── main.py        # Interfaz gráfica (customtkinter + mapa de anillos en tk.Canvas)
 ├── assets/            # Iconos (icon.ico, icon.png)
 ├── docs/              # Portada (hero.png), capturas (screenshots/) e imagen para redes (social-preview.jpg)

@@ -20,6 +20,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Iterable
 
+from i18n import T
+
 IS_WIN = os.name == "nt"
 IS_MAC = sys.platform == "darwin"
 IS_LINUX = sys.platform.startswith("linux")
@@ -218,9 +220,11 @@ def _posix_mounts() -> list[str]:
 def system_files_info() -> list[tuple[str, str, int, str]]:
     if not IS_WIN:
         items = []
-        cands = [("Memoria de intercambio", "/swapfile", "Lo gestiona el sistema. Se puede reducir con swapoff/fallocate."),
-                 ("Memoria de intercambio", "/swap.img", "Lo gestiona el sistema. Se puede reducir con swapoff/fallocate."),
-                 ("Imagen de reposo", "/private/var/vm/sleepimage", "La gestiona macOS. Se puede desactivar con: sudo pmset -a hibernatemode 0")]
+        swap_tip = T("Lo gestiona el sistema. Se puede reducir con swapoff/fallocate.")
+        cands = [(T("Memoria de intercambio"), "/swapfile", swap_tip),
+                 (T("Memoria de intercambio"), "/swap.img", swap_tip),
+                 (T("Imagen de reposo"), "/private/var/vm/sleepimage",
+                  T("La gestiona macOS. Se puede desactivar con: sudo pmset -a hibernatemode 0"))]
         for label, p, tip in cands:
             try:
                 items.append((label, p, os.stat(p).st_size, tip))
@@ -230,9 +234,11 @@ def system_files_info() -> list[tuple[str, str, int, str]]:
     """Archivos grandes del sistema que no se pueden borrar a mano, con consejo."""
     items = []
     tips = {
-        "hiberfil.sys": ("Hibernación", "Si no usas la hibernación, ejecuta como administrador: powercfg /h off"),
-        "pagefile.sys": ("Memoria virtual", "Lo gestiona Windows. Se puede reducir en Sistema > Configuración avanzada > Rendimiento."),
-        "swapfile.sys": ("Memoria de apps", "Lo gestiona Windows. No se debe borrar."),
+        "hiberfil.sys": (T("Hibernación"),
+                         T("Si no usas la hibernación, ejecuta como administrador: powercfg /h off")),
+        "pagefile.sys": (T("Memoria virtual"), T("Lo gestiona Windows. Se puede reducir en "
+                                                 "Sistema > Configuración avanzada > Rendimiento.")),
+        "swapfile.sys": (T("Memoria de apps"), T("Lo gestiona Windows. No se debe borrar.")),
     }
     for fname, (label, tip) in tips.items():
         p = os.path.join(SYSDRIVE, fname)
@@ -270,12 +276,13 @@ def protection_level(path: str) -> tuple[str, str]:
     p = norm(path)
     drive, rest = os.path.splitdrive(p)
     if rest in ("", os.sep):
-        return BLOCK, "Es la raíz de un disco."
+        return BLOCK, T("Es la raíz de un disco.")
     if p in _protected_exact():
-        return BLOCK, "Es una carpeta base del sistema o de tu usuario (puedes borrar su contenido, no la carpeta)."
-    name = os.path.basename(p).lower()
+        return BLOCK, T("Es una carpeta base del sistema o de tu usuario "
+                        "(puedes borrar su contenido, no la carpeta).")
+    name =os.path.basename(p).lower()
     if name in {"pagefile.sys", "hiberfil.sys", "swapfile.sys", "bootmgr", "dumpstack.log.tmp"}:
-        return BLOCK, "Archivo del sistema gestionado por Windows."
+        return BLOCK, T("Archivo del sistema gestionado por Windows.")
     allowed_in_windows = [os.path.join(WINDIR, "Temp"),
                           os.path.join(WINDIR, "SoftwareDistribution", "Download"),
                           os.path.join(WINDIR, "Minidump"),
@@ -283,26 +290,26 @@ def protection_level(path: str) -> tuple[str, str]:
     if is_inside(p, WINDIR):
         if any(is_inside(p, a) and norm(p) != norm(a) for a in allowed_in_windows[:3]) or norm(p) == norm(allowed_in_windows[3]):
             return OK, ""
-        return BLOCK, "Está dentro de la carpeta de Windows."
+        return BLOCK, T("Está dentro de la carpeta de Windows.")
     for sysdir in ("System Volume Information", "$Recycle.Bin", "Recovery", "Boot", "EFI",
                    "$WinREAgent", "$Windows.~BT", "$Windows.~WS", "Config.Msi"):
         if is_inside(p, os.path.join(drive + os.sep, sysdir)):
-            return BLOCK, "Carpeta protegida del sistema."
+            return BLOCK, T("Carpeta protegida del sistema.")
     if is_inside(p, os.path.join(PROGRAMDATA, "Microsoft")):
-        return BLOCK, "Datos internos de Windows."
+        return BLOCK, T("Datos internos de Windows.")
     for pf in PROGRAM_FILES:
         if is_inside(p, pf):
-            return WARN, ("Está en Archivos de programa. Si la app sigue instalada, desinstálala desde la "
-                          "pestaña Aplicaciones en lugar de borrar la carpeta.")
+            return WARN, T("Está en Archivos de programa. Si la app sigue instalada, desinstálala desde la "
+                           "pestaña Aplicaciones en lugar de borrar la carpeta.")
     return OK, ""
 
 
 def _posix_protection(path: str) -> tuple[str, str]:
     p = norm(os.path.realpath(path)) if not os.path.islink(path) else norm(path)
     if p in ("/", ""):
-        return BLOCK, "Es la raíz del disco."
+        return BLOCK, T("Es la raíz del disco.")
     if p in [norm(x) for x in _posix_mounts()]:
-        return BLOCK, "Es la raíz de un disco."
+        return BLOCK, T("Es la raíz de un disco.")
     base = [HOME, os.path.dirname(HOME), MAC_LIB, XDG_CACHE, XDG_CONFIG, XDG_DATA, os.path.join(HOME, ".local"),
             "/Applications", "/Users", "/home", "/Volumes", "/tmp", "/var/tmp", "/private", "/private/tmp", "/opt",
             "/media", "/mnt", "/srv"]
@@ -310,15 +317,16 @@ def _posix_protection(path: str) -> tuple[str, str]:
                 "Escritorio", "Documentos", "Descargas", "Imágenes", "Música", "Vídeos"):
         base.append(os.path.join(HOME, sub))
     if p in [norm(b) for b in base]:
-        return BLOCK, "Es una carpeta base del sistema o de tu usuario (puedes borrar su contenido, no la carpeta)."
+        return BLOCK, T("Es una carpeta base del sistema o de tu usuario "
+                        "(puedes borrar su contenido, no la carpeta).")
     for sysdir in ("/System", "/usr", "/bin", "/sbin", "/etc", "/lib", "/lib32", "/lib64", "/libx32", "/boot",
                    "/dev", "/proc", "/sys", "/run", "/snap", "/var/lib", "/var/db", "/Library", "/private/etc",
                    "/private/var/db", "/cores", os.path.join(MAC_LIB, "Keychains"), os.path.join(HOME, ".ssh"),
                    os.path.join(HOME, ".gnupg")):
         if is_inside(p, sysdir):
-            return BLOCK, "Carpeta protegida del sistema."
+            return BLOCK, T("Carpeta protegida del sistema.")
     if is_inside(p, "/Applications") or is_inside(p, "/opt"):
-        return WARN, "Es una aplicación instalada. Mejor desinstálala desde la sección Aplicaciones."
+        return WARN, T("Es una aplicación instalada. Mejor desinstálala desde la sección Aplicaciones.")
     return OK, ""
 
 
@@ -419,7 +427,7 @@ def delete_paths(paths: Iterable[str], permanent: bool,
             continue
         if not trusted and protection_level(p)[0] == BLOCK:
             total.failed += 1
-            total.errors.append(f"{p}: ruta protegida, no se ha tocado")
+            total.errors.append(T("{path}: ruta protegida, no se ha tocado", path=p))
             continue
         if progress:
             progress(p)
@@ -497,6 +505,24 @@ def relaunch_as_admin() -> bool:
     return ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, params, None, 1) > 32
 
 
+def relaunch_self() -> bool:
+    """Abre otra instancia de la app (p. ej. tras cambiar el idioma). True si se pudo lanzar."""
+    env = dict(os.environ)
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"  # la copia nueva no reutiliza la carpeta temporal de esta
+    try:
+        if getattr(sys, "frozen", False):
+            bundle = _mac_bundle() if IS_MAC else None
+            if bundle:
+                subprocess.Popen(["open", "-n", bundle], env=env)
+            else:
+                subprocess.Popen([sys.executable], env=env, close_fds=True)
+        else:
+            subprocess.Popen([sys.executable, os.path.abspath(sys.argv[0])], env=env, close_fds=True)
+        return True
+    except OSError:
+        return False
+
+
 def open_in_explorer(path: str) -> None:
     if IS_WIN:
         if os.path.isfile(path):
@@ -526,19 +552,23 @@ def launch(target: str) -> None:
 def system_tools() -> list[tuple[str, str, str]]:
     """Herramientas nativas del sistema para la página de Resumen: (título, descripción, destino)."""
     if IS_WIN:
-        return [("Liberador de espacio", "Restos de actualizaciones y del sistema", "cleanmgr.exe"),
-                ("Sensor de almacenamiento", "Limpieza automática programada", "ms-settings:storagesense"),
-                ("Puntos de restauración", "Cuánto ocupan las copias del sistema", "SystemPropertiesProtection.exe")]
+        return [(T("Liberador de espacio"), T("Restos de actualizaciones y del sistema"), "cleanmgr.exe"),
+                (T("Sensor de almacenamiento"), T("Limpieza automática programada"), "ms-settings:storagesense"),
+                (T("Puntos de restauración"), T("Cuánto ocupan las copias del sistema"),
+                 "SystemPropertiesProtection.exe")]
     if IS_MAC:
-        return [("Almacenamiento", "Recomendaciones de espacio de macOS",
+        return [(T("Almacenamiento"), T("Recomendaciones de espacio de macOS"),
                  "x-apple.systempreferences:com.apple.settings.Storage"),
-                ("Monitor de Actividad", "Procesos y uso de disco", "/System/Applications/Utilities/Activity Monitor.app"),
-                ("Utilidad de Discos", "Volúmenes, particiones e instantáneas", "/System/Applications/Utilities/Disk Utility.app")]
+                (T("Monitor de Actividad"), T("Procesos y uso de disco"),
+                 "/System/Applications/Utilities/Activity Monitor.app"),
+                (T("Utilidad de Discos"), T("Volúmenes, particiones e instantáneas"),
+                 "/System/Applications/Utilities/Disk Utility.app")]
     tools = []
-    for exe, t1, t2 in (("baobab", "Analizador de uso de disco", "Herramienta de GNOME para ver el uso del disco"),
-                        ("gnome-system-monitor", "Monitor del sistema", "Procesos y sistemas de archivos"),
-                        ("filelight", "Filelight", "Analizador de disco de KDE"),
-                        ("gnome-disks", "Discos", "Volúmenes y particiones")):
+    for exe, t1, t2 in (("baobab", T("Analizador de uso de disco"),
+                         T("Herramienta de GNOME para ver el uso del disco")),
+                        ("gnome-system-monitor", T("Monitor del sistema"), T("Procesos y sistemas de archivos")),
+                        ("filelight", "Filelight", T("Analizador de disco de KDE")),
+                        ("gnome-disks", T("Discos"), T("Volúmenes y particiones"))):
         if shutil.which(exe):
             tools.append((t1, t2, exe))
     return tools[:3]
@@ -645,115 +675,121 @@ def _windows_categories() -> list[Category]:
     L, R, H, W = LOCAL, ROAMING, HOME, WINDIR
     cats = [
         # --- Sistema ---
-        Category("tmp_user", "Sistema", "Temporales de usuario",
-                 "Archivos temporales que dejan los programas (%TEMP%). Lo que esté en uso se salta.",
+        Category("tmp_user", T("Sistema"), T("Temporales de usuario"),
+                 T("Archivos temporales que dejan los programas (%TEMP%). Lo que esté en uso se salta."),
                  [TEMP]),
-        Category("tmp_win", "Sistema", "Temporales de Windows",
-                 r"C:\Windows\Temp. Necesita permisos de administrador.", [os.path.join(W, "Temp")], admin=True),
-        Category("wu", "Sistema", "Descargas de Windows Update",
-                 "Instaladores de actualizaciones ya aplicadas. Windows los vuelve a descargar si hacen falta.",
+        Category("tmp_win", T("Sistema"), T("Temporales de Windows"),
+                 T(r"C:\Windows\Temp. Necesita permisos de administrador."), [os.path.join(W, "Temp")], admin=True),
+        Category("wu", T("Sistema"), T("Descargas de Windows Update"),
+                 T("Instaladores de actualizaciones ya aplicadas. Windows los vuelve a descargar si hacen falta."),
                  [os.path.join(W, "SoftwareDistribution", "Download")], admin=True),
-        Category("do", "Sistema", "Caché de Optimización de distribución",
-                 "Copias de actualizaciones compartidas con otros PCs.",
+        Category("do", T("Sistema"), T("Caché de Optimización de distribución"),
+                 T("Copias de actualizaciones compartidas con otros PCs."),
                  [os.path.join(W, r"ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache")],
                  admin=True),
-        Category("dumps", "Sistema", "Volcados de errores e informes",
-                 "Volcados de memoria tras cuelgues e informes de errores de Windows (WER).",
+        Category("dumps", T("Sistema"), T("Volcados de errores e informes"),
+                 T("Volcados de memoria tras cuelgues e informes de errores de Windows (WER)."),
                  [os.path.join(L, "CrashDumps"), os.path.join(W, "Minidump"), os.path.join(W, "MEMORY.DMP"),
                   os.path.join(L, r"Microsoft\Windows\WER\ReportArchive"),
                   os.path.join(L, r"Microsoft\Windows\WER\ReportQueue"),
                   os.path.join(PROGRAMDATA, r"Microsoft\Windows\WER\ReportArchive"),
                   os.path.join(PROGRAMDATA, r"Microsoft\Windows\WER\ReportQueue")]),
-        Category("thumbs", "Sistema", "Caché de miniaturas",
-                 "Miniaturas de imágenes del Explorador. Se regeneran solas.",
+        Category("thumbs", T("Sistema"), T("Caché de miniaturas"),
+                 T("Miniaturas de imágenes del Explorador. Se regeneran solas."),
                  [os.path.join(L, r"Microsoft\Windows\Explorer\thumbcache_*.db"),
                   os.path.join(L, r"Microsoft\Windows\Explorer\iconcache_*.db")]),
-        Category("gpu", "Sistema", "Cachés de sombreadores de la GPU",
-                 "Cachés de DirectX y NVIDIA/AMD. Se regeneran (los juegos pueden tardar algo más la primera vez).",
+        Category("gpu", T("Sistema"), T("Cachés de sombreadores de la GPU"),
+                 T("Cachés de DirectX y NVIDIA/AMD. "
+                   "Se regeneran (los juegos pueden tardar algo más la primera vez)."),
                  [os.path.join(L, "D3DSCache"), os.path.join(L, r"NVIDIA\DXCache"), os.path.join(L, r"NVIDIA\GLCache"),
                   os.path.join(L, r"NVIDIA Corporation\NV_Cache"), os.path.join(L, r"AMD\DxCache"),
                   os.path.join(L, r"AMD\DxcCache"), os.path.join(L, r"AMD\VkCache")]),
         # --- Navegadores ---
-        Category("chrome", "Navegadores", "Caché de Google Chrome", "No borra contraseñas, historial ni sesiones.",
+        Category("chrome", T("Navegadores"), T("Caché de Google Chrome"),
+                 T("No borra contraseñas, historial ni sesiones."),
                  _chromium(os.path.join(L, r"Google\Chrome\User Data")), close_apps="Chrome"),
-        Category("edge", "Navegadores", "Caché de Microsoft Edge", "No borra contraseñas, historial ni sesiones.",
+        Category("edge", T("Navegadores"), T("Caché de Microsoft Edge"),
+                 T("No borra contraseñas, historial ni sesiones."),
                  _chromium(os.path.join(L, r"Microsoft\Edge\User Data")), close_apps="Edge"),
-        Category("brave", "Navegadores", "Caché de Brave", "No borra contraseñas, historial ni sesiones.",
+        Category("brave", T("Navegadores"), T("Caché de Brave"), T("No borra contraseñas, historial ni sesiones."),
                  _chromium(os.path.join(L, r"BraveSoftware\Brave-Browser\User Data")), close_apps="Brave"),
-        Category("opera", "Navegadores", "Caché de Opera", "No borra contraseñas, historial ni sesiones.",
+        Category("opera", T("Navegadores"), T("Caché de Opera"), T("No borra contraseñas, historial ni sesiones."),
                  [os.path.join(L, r"Opera Software\*\Cache"), os.path.join(R, r"Opera Software\*\Code Cache")],
                  close_apps="Opera"),
-        Category("firefox", "Navegadores", "Caché de Firefox", "No borra contraseñas, historial ni sesiones.",
+        Category("firefox", T("Navegadores"), T("Caché de Firefox"),
+                 T("No borra contraseñas, historial ni sesiones."),
                  [os.path.join(L, r"Mozilla\Firefox\Profiles\*\cache2")], close_apps="Firefox"),
-        Category("electron", "Navegadores", "Cachés de apps de escritorio",
-                 "Cachés de apps tipo VS Code, Discord, Slack, Teams, Spotify, Cursor... Se regeneran solas.",
-                 _electron_apps(), close_apps="esas aplicaciones"),
+        Category("electron", T("Navegadores"), T("Cachés de apps de escritorio"),
+                 T("Cachés de apps tipo VS Code, Discord, Slack, Teams, Spotify, Cursor... Se regeneran solas."),
+                 _electron_apps(), close_apps=T("esas aplicaciones")),
         # --- Desarrollo ---
-        Category("pip", "Desarrollo", "Caché de pip (Python)", "Paquetes descargados. pip los vuelve a bajar si hacen falta.",
+        Category("pip", T("Desarrollo"), T("Caché de pip (Python)"),
+                 T("Paquetes descargados. pip los vuelve a bajar si hacen falta."),
                  [os.path.join(L, r"pip\Cache"), os.path.join(L, r"pip\cache"), os.path.join(H, r".cache\pip")]),
-        Category("uv", "Desarrollo", "Caché de uv (Python)", "Paquetes descargados por uv.",
+        Category("uv", T("Desarrollo"), T("Caché de uv (Python)"), T("Paquetes descargados por uv."),
                  [os.path.join(L, r"uv\cache"), os.path.join(H, r".cache\uv")]),
-        Category("conda", "Desarrollo", "Paquetes descargados de Conda",
-                 "Equivale a 'conda clean --all'. Revisa si usas entornos sin conexión.",
+        Category("conda", T("Desarrollo"), T("Paquetes descargados de Conda"),
+                 T("Equivale a 'conda clean --all'. Revisa si usas entornos sin conexión."),
                  [os.path.join(H, r".conda\pkgs"), os.path.join(H, r"anaconda3\pkgs"),
                   os.path.join(H, r"miniconda3\pkgs"), os.path.join(PROGRAMDATA, r"anaconda3\pkgs"),
                   os.path.join(PROGRAMDATA, r"miniconda3\pkgs")], risk=REVIEW),
-        Category("npm", "Desarrollo", "Caché de npm / yarn / pnpm / bun", "Paquetes de Node descargados.",
+        Category("npm", T("Desarrollo"), T("Caché de npm / yarn / pnpm / bun"), T("Paquetes de Node descargados."),
                  [os.path.join(L, "npm-cache"), os.path.join(R, "npm-cache"), os.path.join(L, r"Yarn\Cache"),
                   os.path.join(L, r"pnpm-cache"), os.path.join(H, r".bun\install\cache")]),
-        Category("pnpm_store", "Desarrollo", "Almacén de pnpm",
-                 "Paquetes compartidos por tus proyectos pnpm. Tendrás que hacer 'pnpm install' de nuevo.",
+        Category("pnpm_store", T("Desarrollo"), T("Almacén de pnpm"),
+                 T("Paquetes compartidos por tus proyectos pnpm. Tendrás que hacer 'pnpm install' de nuevo."),
                  [os.path.join(L, r"pnpm\store")], risk=REVIEW),
-        Category("gradle", "Desarrollo", "Caché de Gradle", "Dependencias y builds de Gradle/Android.",
+        Category("gradle", T("Desarrollo"), T("Caché de Gradle"), T("Dependencias y builds de Gradle/Android."),
                  [os.path.join(H, r".gradle\caches"), os.path.join(H, r".gradle\wrapper\dists"),
                   os.path.join(H, r".gradle\daemon")]),
-        Category("android", "Desarrollo", "Emuladores e imágenes de Android",
-                 "Emuladores (AVD) e imágenes de sistema del SDK. Ocupan mucho; bórralos si no los usas.",
+        Category("android", T("Desarrollo"), T("Emuladores e imágenes de Android"),
+                 T("Emuladores (AVD) e imágenes de sistema del SDK. Ocupan mucho; bórralos si no los usas."),
                  [os.path.join(H, r".android\avd"), os.path.join(L, r"Android\Sdk\system-images")], risk=REVIEW),
-        Category("maven", "Desarrollo", "Repositorio local de Maven", "Dependencias Java descargadas.",
+        Category("maven", T("Desarrollo"), T("Repositorio local de Maven"), T("Dependencias Java descargadas."),
                  [os.path.join(H, r".m2\repository")], risk=REVIEW),
-        Category("nuget", "Desarrollo", "Cachés de NuGet (.NET)", "Paquetes .NET descargados.",
+        Category("nuget", T("Desarrollo"), T("Cachés de NuGet (.NET)"), T("Paquetes .NET descargados."),
                  [os.path.join(L, r"NuGet\v3-cache"), os.path.join(L, r"NuGet\plugins-cache"),
                   os.path.join(H, r".nuget\packages")], risk=REVIEW),
-        Category("cargo", "Desarrollo", "Caché de Cargo (Rust)", "Crates descargados.",
+        Category("cargo", T("Desarrollo"), T("Caché de Cargo (Rust)"), T("Crates descargados."),
                  [os.path.join(H, r".cargo\registry\cache"), os.path.join(H, r".cargo\registry\src"),
                   os.path.join(H, r".cargo\git\checkouts")]),
-        Category("go", "Desarrollo", "Caché de Go", "Caché de compilación y módulos de Go.",
+        Category("go", T("Desarrollo"), T("Caché de Go"), T("Caché de compilación y módulos de Go."),
                  [os.path.join(L, "go-build"), os.path.join(H, r"go\pkg\mod\cache")]),
-        Category("platformio", "Desarrollo", "Caché de PlatformIO", "Descargas temporales de PlatformIO.",
+        Category("platformio", T("Desarrollo"), T("Caché de PlatformIO"), T("Descargas temporales de PlatformIO."),
                  [os.path.join(H, r".platformio\.cache")]),
-        Category("electron_dl", "Desarrollo", "Cachés de Electron / Playwright / Cypress",
-                 "Binarios descargados por herramientas de desarrollo.",
+        Category("electron_dl", T("Desarrollo"), T("Cachés de Electron / Playwright / Cypress"),
+                 T("Binarios descargados por herramientas de desarrollo."),
                  [os.path.join(L, r"electron\Cache"), os.path.join(L, r"electron-builder\Cache"),
                   os.path.join(L, r"Cypress\Cache"), os.path.join(L, "ms-playwright")], risk=REVIEW),
-        Category("unity", "Desarrollo", "Caché de Unity", "Caché de assets y paquetes de Unity.",
+        Category("unity", T("Desarrollo"), T("Caché de Unity"), T("Caché de assets y paquetes de Unity."),
                  [os.path.join(L, r"Unity\cache"), os.path.join(R, r"Unity\Asset Store-5.x")], risk=REVIEW),
-        Category("vs", "Desarrollo", "Caché de instaladores de Visual Studio",
-                 "Paquetes de instalación de Visual Studio.",
+        Category("vs", T("Desarrollo"), T("Caché de instaladores de Visual Studio"),
+                 T("Paquetes de instalación de Visual Studio."),
                  [os.path.join(PROGRAMDATA, r"Microsoft\VisualStudio\Packages")], risk=REVIEW, admin=True),
         # --- IA / Modelos ---
-        Category("hf", "IA / Modelos", "Modelos de Hugging Face",
-                 "Modelos y datasets descargados (transformers, diffusers...). Se vuelven a descargar al usarlos.",
+        Category("hf", T("IA / Modelos"), T("Modelos de Hugging Face"),
+                 T("Modelos y datasets descargados (transformers, diffusers...). Se vuelven a descargar al usarlos."),
                  [os.path.join(_hf_home(), "hub"), os.path.join(_hf_home(), "datasets"),
                   os.path.join(_hf_home(), "xet")], risk=REVIEW),
-        Category("ollama", "IA / Modelos", "Modelos de Ollama",
-                 "TODOS los modelos de Ollama. Para borrar solo algunos usa la pestaña 'Modelos IA'.",
+        Category("ollama", T("IA / Modelos"), T("Modelos de Ollama"),
+                 T("TODOS los modelos de Ollama. Para borrar solo algunos usa la pestaña 'Modelos IA'."),
                  [_ollama_models()], risk=REVIEW),
-        Category("lmstudio", "IA / Modelos", "Modelos de LM Studio", "Modelos GGUF/MLX descargados en LM Studio.",
+        Category("lmstudio", T("IA / Modelos"), T("Modelos de LM Studio"),
+                 T("Modelos GGUF/MLX descargados en LM Studio."),
                  [os.path.join(H, r".lmstudio\models"), os.path.join(H, r".cache\lm-studio\models")], risk=REVIEW),
-        Category("torch", "IA / Modelos", "Caché de PyTorch / Whisper",
-                 "Pesos descargados por torch.hub, Whisper, etc.",
+        Category("torch", T("IA / Modelos"), T("Caché de PyTorch / Whisper"),
+                 T("Pesos descargados por torch.hub, Whisper, etc."),
                  [os.path.join(H, r".cache\torch"), os.path.join(H, r".cache\whisper")], risk=REVIEW),
-        Category("ml_misc", "IA / Modelos", "Otros modelos (Keras, DeepFace, rembg, ModelScope...)",
-                 "Pesos descargados por librerías de IA. Se vuelven a descargar al usarlas.",
+        Category("ml_misc", T("IA / Modelos"), T("Otros modelos (Keras, DeepFace, rembg, ModelScope...)"),
+                 T("Pesos descargados por librerías de IA. Se vuelven a descargar al usarlas."),
                  [os.path.join(H, r".keras\models"), os.path.join(H, r".deepface\weights"),
                   os.path.join(H, ".rembg"), os.path.join(H, ".u2net"), os.path.join(H, ".modelscope"),
                   os.path.join(H, r".cache\modelscope"), os.path.join(H, ".pkuseg"),
                   os.path.join(H, r".cache\insightface"), os.path.join(H, ".insightface"),
                   os.path.join(H, r".cache\clip"), os.path.join(H, r".cache\paddle"),
                   os.path.join(H, r".EasyOCR\model")], risk=REVIEW),
-        Category("gpt4all", "IA / Modelos", "Modelos de GPT4All / Jan",
-                 "Modelos descargados por GPT4All o Jan.",
+        Category("gpt4all", T("IA / Modelos"), T("Modelos de GPT4All / Jan"),
+                 T("Modelos descargados por GPT4All o Jan."),
                  [os.path.join(L, r"nomic.ai\GPT4All"), os.path.join(H, r"jan\models"),
                   os.path.join(R, r"Jan\data\models")], risk=REVIEW),
     ]
@@ -775,15 +811,15 @@ def _posix_categories() -> list[Category]:
                "jetbrains", "homebrew", "com.apple.dt.xcode", "bun", "node-gyp", "deno", "thumbnails",
                "conda", "pypoetry", "typescript", "mesa_shader_cache", "nvidia", "fontconfig"}
     cats = [
-        Category("tmp_user", "Sistema", "Temporales antiguos",
-                 f"Archivos temporales de más de 2 días en {TEMP}. Los recientes no se tocan.",
+        Category("tmp_user", T("Sistema"), T("Temporales antiguos"),
+                 T("Archivos temporales de más de 2 días en {path}. Los recientes no se tocan.", path=TEMP),
                  [os.path.join(TEMP, "*")], min_age_days=2),
-        Category("app_cache", "Navegadores", "Cachés de apps y navegadores",
-                 ("Cachés de ~/Library/Caches (Safari, Chrome, Spotify, Slack...). Se regeneran solas."
-                  if IS_MAC else "Cachés de ~/.cache (Chrome, Firefox, Spotify, Slack...). Se regeneran solas."),
-                 [os.path.join(user_cache, "*")], exclude=handled, close_apps="los navegadores y apps abiertas"),
-        Category("electron", "Navegadores", "Cachés de apps de escritorio",
-                 "Cachés de apps tipo VS Code, Discord, Slack, Teams, Cursor... Se regeneran solas.",
+        Category("app_cache", T("Navegadores"), T("Cachés de apps y navegadores"),
+                 (T("Cachés de ~/Library/Caches (Safari, Chrome, Spotify, Slack...). Se regeneran solas.")
+                  if IS_MAC else T("Cachés de ~/.cache (Chrome, Firefox, Spotify, Slack...). Se regeneran solas.")),
+                 [os.path.join(user_cache, "*")], exclude=handled, close_apps=T("los navegadores y apps abiertas")),
+        Category("electron", T("Navegadores"), T("Cachés de apps de escritorio"),
+                 T("Cachés de apps tipo VS Code, Discord, Slack, Teams, Cursor... Se regeneran solas."),
                  [os.path.join(sup if IS_MAC else CFG, "*", c) for c in
                   ("Cache", "Code Cache", "GPUCache", "DawnCache", "DawnGraphiteCache", "DawnWebGPUCache",
                    "CachedData", "CachedExtensionVSIXs", "Service Worker/CacheStorage")]
@@ -791,86 +827,96 @@ def _posix_categories() -> list[Category]:
                     for d in ("Google/Chrome", "google-chrome", "chromium", "BraveSoftware/Brave-Browser",
                               "Microsoft Edge", "microsoft-edge")
                     for c in ("Code Cache", "GPUCache", "Service Worker/CacheStorage")],
-                 close_apps="esas aplicaciones"),
-        Category("logs", "Sistema", "Registros de usuario",
-                 "Logs de aplicaciones (~/Library/Logs)." if IS_MAC else "Registros de aplicaciones y volcados de errores.",
+                 close_apps=T("esas aplicaciones")),
+        Category("logs", T("Sistema"), T("Registros de usuario"),
+                 T("Logs de aplicaciones (~/Library/Logs).") if IS_MAC else
+                 T("Registros de aplicaciones y volcados de errores."),
                  [os.path.join(L, "Logs", "*")] if IS_MAC else
                  [os.path.join(DATA, "xorg", "*.log*"), os.path.join(H, ".xsession-errors.old"),
                   "/var/crash/*", os.path.join(DATA, "recently-used.xbel.bak")], min_age_days=1),
-        Category("thumbs", "Sistema", "Caché de miniaturas", "Miniaturas de imágenes. Se regeneran solas.",
+        Category("thumbs", T("Sistema"), T("Caché de miniaturas"), T("Miniaturas de imágenes. Se regeneran solas."),
                  [os.path.join(C, "thumbnails"), os.path.join(H, ".thumbnails")] if IS_LINUX else
                  [os.path.join(L, "Caches", "com.apple.QuickLook.thumbnailcache")]),
-        Category("gpu", "Sistema", "Cachés de sombreadores de la GPU", "Se regeneran (los juegos pueden tardar algo más).",
+        Category("gpu", T("Sistema"), T("Cachés de sombreadores de la GPU"),
+                 T("Se regeneran (los juegos pueden tardar algo más)."),
                  [os.path.join(C, "mesa_shader_cache"), os.path.join(C, "nvidia"), os.path.join(H, ".nv", "GLCache"),
                   os.path.join(C, "radv_builtin_shaders64")]),
         # --- Desarrollo ---
-        Category("pip", "Desarrollo", "Caché de pip / Poetry (Python)", "Paquetes descargados. Se vuelven a bajar si hacen falta.",
+        Category("pip", T("Desarrollo"), T("Caché de pip / Poetry (Python)"),
+                 T("Paquetes descargados. Se vuelven a bajar si hacen falta."),
                  uc("pip", "pypoetry") + [os.path.join(C, "pip")]),
-        Category("uv", "Desarrollo", "Caché de uv (Python)", "Paquetes descargados por uv.",
+        Category("uv", T("Desarrollo"), T("Caché de uv (Python)"), T("Paquetes descargados por uv."),
                  [os.path.join(C, "uv")] + uc("uv")),
-        Category("conda", "Desarrollo", "Paquetes descargados de Conda",
-                 "Equivale a 'conda clean --all'. Revisa si usas entornos sin conexión.",
+        Category("conda", T("Desarrollo"), T("Paquetes descargados de Conda"),
+                 T("Equivale a 'conda clean --all'. Revisa si usas entornos sin conexión."),
                  [os.path.join(H, d, "pkgs") for d in (".conda", "anaconda3", "miniconda3", "miniforge3", "mambaforge")]
                  + ["/opt/anaconda3/pkgs", "/opt/miniconda3/pkgs", "/opt/homebrew/Caskroom/miniconda/base/pkgs"],
                  risk=REVIEW),
-        Category("npm", "Desarrollo", "Caché de npm / yarn / pnpm / bun / deno", "Paquetes de Node descargados.",
+        Category("npm", T("Desarrollo"), T("Caché de npm / yarn / pnpm / bun / deno"),
+                 T("Paquetes de Node descargados."),
                  [os.path.join(H, ".npm", "_cacache"), os.path.join(H, ".npm", "_npx"), os.path.join(H, ".bun", "install", "cache"),
                   os.path.join(H, ".yarn", "berry", "cache")] + uc("yarn", "Yarn", "node-gyp", "deno", "typescript", "bun")),
-        Category("pnpm_store", "Desarrollo", "Almacén de pnpm",
-                 "Paquetes compartidos por tus proyectos pnpm. Tendrás que hacer 'pnpm install' de nuevo.",
+        Category("pnpm_store", T("Desarrollo"), T("Almacén de pnpm"),
+                 T("Paquetes compartidos por tus proyectos pnpm. Tendrás que hacer 'pnpm install' de nuevo."),
                  [os.path.join(DATA, "pnpm", "store"), os.path.join(L, "pnpm", "store")] + uc("pnpm"), risk=REVIEW),
-        Category("gradle", "Desarrollo", "Caché de Gradle", "Dependencias y builds de Gradle/Android.",
+        Category("gradle", T("Desarrollo"), T("Caché de Gradle"), T("Dependencias y builds de Gradle/Android."),
                  [os.path.join(H, ".gradle", d) for d in ("caches", "wrapper/dists", "daemon")]),
-        Category("android", "Desarrollo", "Emuladores e imágenes de Android",
-                 "Emuladores (AVD) e imágenes de sistema del SDK. Ocupan mucho; bórralos si no los usas.",
+        Category("android", T("Desarrollo"), T("Emuladores e imágenes de Android"),
+                 T("Emuladores (AVD) e imágenes de sistema del SDK. Ocupan mucho; bórralos si no los usas."),
                  [os.path.join(H, ".android", "avd"), os.path.join(H, "Android", "Sdk", "system-images"),
                   os.path.join(L, "Android", "sdk", "system-images")], risk=REVIEW),
-        Category("xcode", "Desarrollo", "Xcode: DerivedData y simuladores",
-                 "Compilaciones intermedias, cachés de simuladores y soporte de dispositivos antiguos.",
+        Category("xcode", T("Desarrollo"), T("Xcode: DerivedData y simuladores"),
+                 T("Compilaciones intermedias, cachés de simuladores y soporte de dispositivos antiguos."),
                  [os.path.join(L, "Developer", "Xcode", "DerivedData"), os.path.join(L, "Developer", "Xcode", "iOS DeviceSupport"),
                   os.path.join(L, "Developer", "Xcode", "watchOS DeviceSupport"),
                   os.path.join(L, "Developer", "CoreSimulator", "Caches"), os.path.join(mc, "com.apple.dt.Xcode")]),
-        Category("xcode_arch", "Desarrollo", "Xcode: archivos de apps (Archives)", "Builds archivados para publicar en la App Store.",
+        Category("xcode_arch", T("Desarrollo"), T("Xcode: archivos de apps (Archives)"),
+                 T("Builds archivados para publicar en la App Store."),
                  [os.path.join(L, "Developer", "Xcode", "Archives")], risk=REVIEW),
-        Category("brew", "Desarrollo", "Caché de Homebrew", "Descargas de Homebrew. Equivale a 'brew cleanup'.",
+        Category("brew", T("Desarrollo"), T("Caché de Homebrew"),
+                 T("Descargas de Homebrew. Equivale a 'brew cleanup'."),
                  uc("Homebrew")),
-        Category("maven", "Desarrollo", "Repositorio local de Maven", "Dependencias Java descargadas.",
+        Category("maven", T("Desarrollo"), T("Repositorio local de Maven"), T("Dependencias Java descargadas."),
                  [os.path.join(H, ".m2", "repository")], risk=REVIEW),
-        Category("nuget", "Desarrollo", "Cachés de NuGet (.NET)", "Paquetes .NET descargados.",
+        Category("nuget", T("Desarrollo"), T("Cachés de NuGet (.NET)"), T("Paquetes .NET descargados."),
                  [os.path.join(H, ".nuget", "packages"), os.path.join(DATA, "NuGet", "v3-cache")], risk=REVIEW),
-        Category("cargo", "Desarrollo", "Caché de Cargo (Rust)", "Crates descargados.",
+        Category("cargo", T("Desarrollo"), T("Caché de Cargo (Rust)"), T("Crates descargados."),
                  [os.path.join(H, ".cargo", "registry", "cache"), os.path.join(H, ".cargo", "registry", "src"),
                   os.path.join(H, ".cargo", "git", "checkouts")]),
-        Category("go", "Desarrollo", "Caché de Go", "Caché de compilación y módulos de Go.",
+        Category("go", T("Desarrollo"), T("Caché de Go"), T("Caché de compilación y módulos de Go."),
                  uc("go-build") + [os.path.join(H, "go", "pkg", "mod", "cache")]),
-        Category("platformio", "Desarrollo", "Caché de PlatformIO", "Descargas temporales de PlatformIO.",
+        Category("platformio", T("Desarrollo"), T("Caché de PlatformIO"), T("Descargas temporales de PlatformIO."),
                  [os.path.join(H, ".platformio", ".cache")]),
-        Category("electron_dl", "Desarrollo", "Cachés de Electron / Playwright / Cypress",
-                 "Binarios descargados por herramientas de desarrollo.",
+        Category("electron_dl", T("Desarrollo"), T("Cachés de Electron / Playwright / Cypress"),
+                 T("Binarios descargados por herramientas de desarrollo."),
                  uc("electron", "electron-builder", "Cypress", "ms-playwright") + [os.path.join(C, "Cypress")], risk=REVIEW),
-        Category("jetbrains", "Desarrollo", "Cachés de JetBrains", "Índices y cachés de IntelliJ, PyCharm, WebStorm...",
+        Category("jetbrains", T("Desarrollo"), T("Cachés de JetBrains"),
+                 T("Índices y cachés de IntelliJ, PyCharm, WebStorm..."),
                  uc("JetBrains")),
-        Category("unity", "Desarrollo", "Caché de Unity", "Caché de assets y paquetes de Unity.",
+        Category("unity", T("Desarrollo"), T("Caché de Unity"), T("Caché de assets y paquetes de Unity."),
                  uc("unity3d") + [os.path.join(C, "unity3d"), os.path.join(L, "Unity", "cache")], risk=REVIEW),
         # --- IA / Modelos ---
-        Category("hf", "IA / Modelos", "Modelos de Hugging Face",
-                 "Modelos y datasets descargados (transformers, diffusers...). Se vuelven a descargar al usarlos.",
+        Category("hf", T("IA / Modelos"), T("Modelos de Hugging Face"),
+                 T("Modelos y datasets descargados (transformers, diffusers...). Se vuelven a descargar al usarlos."),
                  [os.path.join(_hf_home(), "hub"), os.path.join(_hf_home(), "datasets"),
                   os.path.join(_hf_home(), "xet")], risk=REVIEW),
-        Category("ollama", "IA / Modelos", "Modelos de Ollama",
-                 "TODOS los modelos de Ollama. Para borrar solo algunos usa la sección «Modelos IA».",
+        Category("ollama", T("IA / Modelos"), T("Modelos de Ollama"),
+                 T("TODOS los modelos de Ollama. Para borrar solo algunos usa la sección «Modelos IA»."),
                  [_ollama_models()], risk=REVIEW),
-        Category("lmstudio", "IA / Modelos", "Modelos de LM Studio", "Modelos GGUF/MLX descargados en LM Studio.",
+        Category("lmstudio", T("IA / Modelos"), T("Modelos de LM Studio"),
+                 T("Modelos GGUF/MLX descargados en LM Studio."),
                  [os.path.join(H, ".lmstudio", "models"), os.path.join(C, "lm-studio", "models")], risk=REVIEW),
-        Category("torch", "IA / Modelos", "Caché de PyTorch / Whisper", "Pesos descargados por torch.hub, Whisper, etc.",
+        Category("torch", T("IA / Modelos"), T("Caché de PyTorch / Whisper"),
+                 T("Pesos descargados por torch.hub, Whisper, etc."),
                  [os.path.join(C, "torch"), os.path.join(C, "whisper")], risk=REVIEW),
-        Category("ml_misc", "IA / Modelos", "Otros modelos (Keras, DeepFace, rembg, ModelScope...)",
-                 "Pesos descargados por librerías de IA. Se vuelven a descargar al usarlas.",
+        Category("ml_misc", T("IA / Modelos"), T("Otros modelos (Keras, DeepFace, rembg, ModelScope...)"),
+                 T("Pesos descargados por librerías de IA. Se vuelven a descargar al usarlas."),
                  [os.path.join(H, ".keras", "models"), os.path.join(H, ".deepface", "weights"), os.path.join(H, ".rembg"),
                   os.path.join(H, ".u2net"), os.path.join(H, ".modelscope"), os.path.join(C, "modelscope"),
                   os.path.join(H, ".pkuseg"), os.path.join(C, "insightface"), os.path.join(H, ".insightface"),
                   os.path.join(C, "clip"), os.path.join(C, "paddle"), os.path.join(H, ".EasyOCR", "model")], risk=REVIEW),
-        Category("gpt4all", "IA / Modelos", "Modelos de GPT4All / Jan", "Modelos descargados por GPT4All o Jan.",
+        Category("gpt4all", T("IA / Modelos"), T("Modelos de GPT4All / Jan"),
+                 T("Modelos descargados por GPT4All o Jan."),
                  [os.path.join(DATA, "nomic.ai", "GPT4All"), os.path.join(sup, "nomic.ai", "GPT4All"),
                   os.path.join(H, "jan", "models"), os.path.join(sup, "Jan", "data", "models")], risk=REVIEW),
     ]
@@ -878,8 +924,9 @@ def _posix_categories() -> list[Category]:
         cats = [c for c in cats if c.id not in ("gpu",)]
     else:
         cats = [c for c in cats if c.id not in ("xcode", "xcode_arch")]
-        cats.insert(2, Category("pkg_cache", "Sistema", "Caché de paquetes del sistema",
-                                "Paquetes .deb/.rpm ya instalados (apt/dnf/pacman). Necesita permisos de administrador.",
+        cats.insert(2, Category("pkg_cache", T("Sistema"), T("Caché de paquetes del sistema"),
+                                T("Paquetes .deb/.rpm ya instalados (apt/dnf/pacman). "
+                                  "Necesita permisos de administrador."),
                                 ["/var/cache/apt/archives/*.deb", "/var/cache/pacman/pkg/*", "/var/cache/dnf/*"],
                                 admin=True))
     return cats
@@ -953,23 +1000,24 @@ class ScanResult:
 
 
 KINDS = {
-    "Vídeo": "mp4 mkv avi mov wmv flv webm m4v mpg mpeg ts m2ts 3gp vob",
-    "Imágenes": "jpg jpeg png gif bmp tif tiff webp heic heif raw cr2 nef arw dng psd svg ico avif exr hdr",
-    "Audio": "mp3 wav flac aac ogg m4a wma opus aiff alac mid midi",
-    "Documentos": "pdf doc docx xls xlsx ppt pptx odt ods odp txt rtf md csv epub mobi pages numbers key",
-    "Comprimidos y discos": "zip rar 7z tar gz tgz bz2 xz zst iso img dmg vhd vhdx vmdk qcow2 cab wim esd",
-    "Modelos de IA": "gguf ggml safetensors ckpt pt pth onnx h5 keras tflite pb mlmodel npz",
-    "Programas e instaladores": "exe msi dll sys app pkg deb rpm appimage apk ipa so dylib jar msix appx snap flatpak",
-    "Código y desarrollo": "py js ts tsx jsx java c cpp h hpp cs go rs rb php swift kt json xml yml yaml html css "
+    T("Vídeo"): "mp4 mkv avi mov wmv flv webm m4v mpg mpeg ts m2ts 3gp vob",
+    T("Imágenes"): "jpg jpeg png gif bmp tif tiff webp heic heif raw cr2 nef arw dng psd svg ico avif exr hdr",
+    T("Audio"): "mp3 wav flac aac ogg m4a wma opus aiff alac mid midi",
+    T("Documentos"): "pdf doc docx xls xlsx ppt pptx odt ods odp txt rtf md csv epub mobi pages numbers key",
+    T("Comprimidos y discos"): "zip rar 7z tar gz tgz bz2 xz zst iso img dmg vhd vhdx vmdk qcow2 cab wim esd",
+    T("Modelos de IA"): "gguf ggml safetensors ckpt pt pth onnx h5 keras tflite pb mlmodel npz",
+    T("Programas e instaladores"): "exe msi dll sys app pkg deb rpm appimage apk ipa so dylib jar msix appx snap "
+                                   "flatpak",
+    T("Código y desarrollo"): "py js ts tsx jsx java c cpp h hpp cs go rs rb php swift kt json xml yml yaml html css "
                            "scss lock map pyc class o obj lib a pdb wasm ipynb",
-    "Bases de datos y caché": "db sqlite sqlite3 ldb log tmp cache dat idx pack bin",
-    "Juegos y 3D": "pak vpk unity3d assets fbx obj blend glb gltf uasset umap bsa ba2",
+    T("Bases de datos y caché"): "db sqlite sqlite3 ldb log tmp cache dat idx pack bin",
+    T("Juegos y 3D"): "pak vpk unity3d assets fbx obj blend glb gltf uasset umap bsa ba2",
 }
 _KIND_BY_EXT = {e: k for k, exts in KINDS.items() for e in exts.split()}
 
 
 def kind_of(ext: str) -> str:
-    return _KIND_BY_EXT.get(ext.lower().lstrip("."), "Otros")
+    return _KIND_BY_EXT.get(ext.lower().lstrip("."), T("Otros"))
 
 
 def _physical_size(entry: os.DirEntry, seen: set[tuple[int, int]]) -> int:
@@ -1203,15 +1251,15 @@ def export_csv(res: "ScanResult", path: str) -> None:
     import csv
     with open(path, "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.writer(fh, delimiter=";")
-        w.writerow(["tipo", "ruta", "bytes", "tamaño", "archivos"])
+        w.writerow([T("tipo"), T("ruta"), "bytes", T("tamaño"), T("archivos")])
         stack = [(res.root, 0)]
         while stack:
             n, depth = stack.pop()
-            w.writerow(["carpeta", n.path, n.size, human(n.size), n.files])
+            w.writerow([T("carpeta"), n.path, n.size, human(n.size), n.files])
             if depth < 3:
                 stack.extend((c, depth + 1) for c in reversed(n.children[:50]))
         for s, p in res.big_files:
-            w.writerow(["archivo", p, s, human(s), 1])
+            w.writerow([T("archivo"), p, s, human(s), 1])
 
 
 # --------------------------------------------------------------------------
@@ -1262,7 +1310,7 @@ def list_ollama_models() -> list[OllamaModel]:
 def ollama_remove(name: str) -> tuple[bool, str]:
     exe = shutil.which("ollama")
     if not exe:
-        return False, "No se encuentra el comando 'ollama'."
+        return False, T("No se encuentra el comando 'ollama'.")
     flags = 0x08000000 if IS_WIN else 0  # CREATE_NO_WINDOW
     try:
         p = subprocess.run([exe, "rm", name], capture_output=True, text=True, timeout=120, creationflags=flags)
@@ -1319,7 +1367,7 @@ def _mac_apps() -> list[InstalledApp]:
             apps.append(InstalledApp(name=name, publisher=str(info.get("CFBundleIdentifier", "")),
                                      version=str(info.get("CFBundleShortVersionString", "")), size=0,
                                      location=e.path, uninstall="trash:" + e.path, install_date=date,
-                                     source="Usuario" if base.startswith(HOME) else "Sistema"))
+                                     source=T("Usuario") if base.startswith(HOME) else T("Sistema")))
     return apps
 
 
@@ -1430,7 +1478,7 @@ def list_installed_apps() -> list[InstalledApp]:
                             size=int(val("EstimatedSize", 0) or 0) * 1024, location=loc,
                             uninstall=str(val("UninstallString")),
                             install_date=str(val("InstallDate")),
-                            source="Usuario" if hive == winreg.HKEY_CURRENT_USER else "Sistema")
+                            source=T("Usuario") if hive == winreg.HKEY_CURRENT_USER else T("Sistema"))
                         key = (name.lower(), app.version)
                         if key not in apps or app.size > apps[key].size:
                             apps[key] = app
@@ -1557,7 +1605,7 @@ def run_uninstaller(cmd: str) -> None:
     """Windows: abre el desinstalador oficial. macOS: manda la .app a la Papelera.
     Linux: no se ejecuta nada aquí (la interfaz muestra y copia el comando)."""
     if not cmd:
-        raise ValueError("Esta aplicación no tiene desinstalador registrado.")
+        raise ValueError(T("Esta aplicación no tiene desinstalador registrado."))
     if cmd.startswith("trash:"):
         from send2trash import send2trash
         send2trash(cmd[6:])
@@ -1708,9 +1756,9 @@ def download_update(info: UpdateInfo, progress: Callable[[int, int], None] | Non
     import tempfile
     import urllib.request
     if not info.asset_url:
-        raise RuntimeError("Esta versión no trae descarga para tu sistema.")
+        raise RuntimeError(T("Esta versión no trae descarga para tu sistema."))
     if not info.digest.lower().startswith("sha256:"):
-        raise RuntimeError("La descarga no trae huella SHA-256, así que no se instala por seguridad.")
+        raise RuntimeError(T("La descarga no trae huella SHA-256, así que no se instala por seguridad."))
     expected = info.digest.split(":", 1)[1].strip().lower()
     folder = tempfile.mkdtemp(prefix="dfs-update-")
     path = os.path.join(folder, info.asset_name)
@@ -1722,7 +1770,7 @@ def download_update(info: UpdateInfo, progress: Callable[[int, int], None] | Non
             total = int(r.headers.get("Content-Length") or info.asset_size or 0)
             while True:
                 if cancel is not None and cancel.is_set():
-                    raise RuntimeError("Descarga cancelada.")
+                    raise RuntimeError(T("Descarga cancelada."))
                 chunk = r.read(256 * 1024)
                 if not chunk:
                     break
@@ -1732,7 +1780,7 @@ def download_update(info: UpdateInfo, progress: Callable[[int, int], None] | Non
                 if progress:
                     progress(done, total)
         if h.hexdigest() != expected:
-            raise RuntimeError("La huella SHA-256 no coincide: la descarga está dañada o no es la oficial.")
+            raise RuntimeError(T("La huella SHA-256 no coincide: la descarga está dañada o no es la oficial."))
     except BaseException:
         shutil.rmtree(folder, ignore_errors=True)
         raise
@@ -1835,8 +1883,9 @@ def apply_update(path: str, exe: str | None = None, pid: int | None = None) -> s
     if IS_WIN:
         import tempfile
         if not _dir_writable(os.path.dirname(exe)):
-            raise RuntimeError(f"No tengo permiso para escribir en {os.path.dirname(exe)}. Mueve la app a otra "
-                               "carpeta (por ejemplo Documentos) o usa el instalador DesktopFreeSpace-Setup.exe.")
+            raise RuntimeError(T("No tengo permiso para escribir en {path}. Mueve la app a otra carpeta "
+                                 "(por ejemplo Documentos) o usa el instalador DesktopFreeSpace-Setup.exe.",
+                                 path=os.path.dirname(exe)))
         pid = pid or os.getpid()
         script = os.path.join(tempfile.gettempdir(), f"dfs-update-{pid}.cmd")
         with open(script, "w", encoding="mbcs", errors="replace") as fh:
@@ -1851,7 +1900,7 @@ def apply_update(path: str, exe: str | None = None, pid: int | None = None) -> s
             member = next((m for m in tf.getmembers() if m.isfile() and
                            os.path.basename(m.name) == "DesktopFreeSpace"), None)
             if member is None:
-                raise RuntimeError("El paquete no contiene el programa.")
+                raise RuntimeError(T("El paquete no contiene el programa."))
             src = tf.extractfile(member)
             with open(new, "wb") as out:
                 shutil.copyfileobj(src, out)
@@ -1874,7 +1923,7 @@ def apply_update(path: str, exe: str | None = None, pid: int | None = None) -> s
             return "opened"
         r = subprocess.run(["ditto", app, bundle], capture_output=True, text=True, timeout=600)
         if r.returncode != 0:
-            raise RuntimeError(r.stderr.strip() or "No se pudo copiar la nueva versión.")
+            raise RuntimeError(r.stderr.strip() or T("No se pudo copiar la nueva versión."))
         return "restart"
     finally:
         if mnt:
